@@ -1,6 +1,6 @@
 # Fine-tuning LayoutLMv3 on DocVQA
 
-We try to reproduce the experiments for fine-tuning LayoutLMv3 on [DocVQA](https://www.docvqa.org/datasets/docvqa) using both 
+We try to reproduce the experiments for fine-tuning [LayoutLMv3](https://arxiv.org/abs/2204.08387) on [DocVQA](https://www.docvqa.org/datasets/docvqa) using both 
 extractive and abstractive approach.
 
 I try to present every single detail within this repository. Note, this is not official codebase from LayoutLMv3.
