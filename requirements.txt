@@ -1,0 +1,8 @@
+### distributed training ###
+accelerate
+
+datasets
+transformers
+glob2
+opencv-python
+editdistance
