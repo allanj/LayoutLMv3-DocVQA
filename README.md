@@ -24,3 +24,9 @@ Note that the test set from the docvqa repo does not come with the ground-truth 
     ```
    Then you will get something called ``
    More details about the statistics after preprocessing, Check out [here](/docs/preprocess.md).
+   The final statistics about the number of spans founded is as follows:
+
+   | Train / #found spans / #not found | Validation  / #found spans / #not found | Test  |
+   |:---------------------------------:|:---------------------------------------:|:-----:|
+   |      39,643 / 36,759 / 2,704      |           5,349 / 4,950 / 399           | 5,188 |
+
