@@ -5,7 +5,10 @@ from datasets import DatasetDict, Dataset
 from src.utils import read_data
 from preprocess.utils import get_answer_indices,clean_text
 
-
+"""
+    Convert the DocVQA dataset into dataset cache, which is a dictionary of Dataset objects.
+    At the same time, we extract the answer spans.
+"""
 
 def extract_start_end_index(current_answers, words):
     ## extracting the start, end index
@@ -57,7 +60,7 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool) -> 
                     for ans in answers:
                         new_answers.append(ans.lower() if lowercase else ans)
                     ## not added yet, later after processing, we add start and end as well.
-                    # new_all_data[key].append(new_answers)
+                    new_all_data["original_answer"].append(new_answers)
                 else:
                     new_all_data[key].append(obj[key])
             ocr_file = f"data/docvqa/{split}/ocr_results/{obj['ucsf_document_id']}_{obj['ucsf_document_page_no']}.json"
@@ -87,7 +90,7 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool) -> 
                     "end_word_position": -1,
                     "gold_answer": "<NO_GOLD_ANSWER>",
                     "extracted_answer": ""}]
-            new_all_data['answers'].append(processed_answers)
+            new_all_data['processed_answers'].append(processed_answers)
 
             ## Note: just to count the stat
             for ans in processed_answers:
