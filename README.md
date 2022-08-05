@@ -30,3 +30,7 @@ Note that the test set from the docvqa repo does not come with the ground-truth 
    |:---------------------------------:|:---------------------------------------:|:-----:|
    |      39,643 / 36,759 / 2,704      |           5,349 / 4,950 / 399           | 5,188 |
 
+
+## TODO
+- [X] Code for tokenization and Collating.
+- [ ] Code for Training (In progress)
