@@ -155,8 +155,8 @@ def main():
     feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained(pretrained_model_name, apply_ocr=False)
     collator = DocVQACollator(tokenizer, feature_extractor)
     dataset = load_from_disk(args.dataset_file)
-    dataset = DatasetDict({"train": dataset["train"].select(range(100)), "val": dataset['val'].select(range(100))})
-    # dataset = DatasetDict({"train": dataset["train"], "val": dataset['val']})
+    # dataset = DatasetDict({"train": dataset["train"].select(range(100)), "val": dataset['val'].select(range(100))})
+    dataset = DatasetDict({"train": dataset["train"], "val": dataset['val']})
     image_dir = {"train": "data/docvqa/train", "val": "data/docvqa/val", "test": "data/docvqa/test"}
     tokenized = dataset.map(tokenize_docvqa,
                             fn_kwargs={"tokenizer": tokenizer, "img_dir": image_dir},
