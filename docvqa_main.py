@@ -138,7 +138,7 @@ def evaluate(args, valid_dataloader: DataLoader, model: PreTrainedModel, metadat
     outputs_numpy = (start_logits_concat, end_logits_concat)
     prediction_dict, prediction_list = postprocess_qa_predictions(metadata=metadata, predictions=outputs_numpy)
     all_pred_texts = [prediction['answer'] for prediction in prediction_list]
-    truth = [meta["answer"] for meta in metadata]
+    truth = [meta["original_answer"] for meta in metadata]
     all_anls, anls = anls_metric_str(predictions=all_pred_texts, gold_labels=truth)
     # anls_score = anls_metric(preds, truth)
     accelerator.print(f"[Info] Average Normalized Lev.S : {anls} ", flush=True)

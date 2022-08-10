@@ -48,7 +48,7 @@ def tokenize_docvqa(examples,
         file = os.path.join(img_dir[examples["data_split"][idx]], image_path)
         # img = Image.open(file).convert("RGB")
         answer_list = examples["processed_answers"][idx] if "processed_answers" in examples else []
-        original_answers = examples["original_answers"][idx] if "original_answers" in examples else []
+        original_answer = examples["original_answer"][idx] if "original_answer" in examples else []
         image_id = f"{examples['ucsf_document_id'][idx]}_{examples['ucsf_document_page_no'][idx]}"
         if len(words) == 0 and current_split == "train":
             continue
@@ -84,7 +84,7 @@ def tokenize_docvqa(examples,
                 features["bbox"].append(boxes_norms)
                 features["start_positions"].append(subword_start)
                 features["end_positions"].append(subword_end)
-                current_metadata["answer"] = answer
+                current_metadata["original_answer"] = original_answer
                 current_metadata["question"] = question
                 current_metadata["num_question_tokens"] = num_question_tokens
                 current_metadata["words"] = words
@@ -123,7 +123,7 @@ def tokenize_docvqa(examples,
             features["bbox"].append(boxes_norms)
             features["start_positions"].append(subword_start)
             features["end_positions"].append(subword_end)
-            current_metadata["answer"] = original_answers
+            current_metadata["original_answer"] = original_answer
             current_metadata["question"] = question
             current_metadata["num_question_tokens"] = num_question_tokens
             current_metadata["words"] = words
