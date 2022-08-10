@@ -4,6 +4,9 @@ import os
 from transformers import LayoutLMv3TokenizerFast, LayoutLMv3Tokenizer, LayoutLMv3FeatureExtractor, LayoutLMv3Processor
 from dataclasses import dataclass
 from PIL import Image
+import torch
+import cv2
+from src.utils import bbox_string
 
 def get_subword_start_end(word_start, word_end, subword_idx2word_idx):
     ## find the separator between the questions and the text
@@ -12,6 +15,7 @@ def get_subword_start_end(word_start, word_end, subword_idx2word_idx):
         if subword_idx2word_idx[i] is None and subword_idx2word_idx[i+1] is None:
             start_of_context = i+2
             break
+    num_question_tokens = start_of_context
     assert start_of_context != -1, "Could not find the start of the context"
     subword_start = -1
     subword_end = -1
@@ -20,7 +24,7 @@ def get_subword_start_end(word_start, word_end, subword_idx2word_idx):
             subword_start = i
         if word_end == subword_idx2word_idx[i]:
             subword_end = i
-    return subword_start, subword_end
+    return subword_start, subword_end, num_question_tokens
 
 def tokenize_docvqa(examples,
                     tokenizer: LayoutLMv3TokenizerFast,
@@ -46,27 +50,45 @@ def tokenize_docvqa(examples,
         answer_list = examples["processed_answers"][idx] if "processed_answers" in examples else []
         original_answers = examples["original_answers"][idx] if "original_answers" in examples else []
         image_id = f"{examples['ucsf_document_id'][idx]}_{examples['ucsf_document_page_no'][idx]}"
+        if len(words) == 0 and current_split == "train":
+            continue
         tokenized_res = tokenizer.encode_plus(text=question, text_pair=words, boxes=layout, add_special_tokens=True,
-                                              return_tensors="pt", max_length=512, truncation="only_second")
+                                              return_tensors="pt", max_length=512, truncation="only_second",
+                                              return_offsets_mapping=True)
 
         input_ids = tokenized_res["input_ids"][0]
 
         subword_idx2word_idx = tokenized_res.encodings[0].word_ids
-
+        img = cv2.imread(file)
+        height, width = img.shape[:2]
         if current_split == "train" or (current_split == "val" and combine_train_val_as_train):
             # for troaining, we treat instances with multiple answers as multiple instances
             for answer in answer_list:
                 if answer["start_word_position"] == -1:
                     continue
-                subword_start, subword_end = get_subword_start_end(answer["start_word_position"], answer["end_word_position"], subword_idx2word_idx)
+                subword_start, subword_end, num_question_tokens = get_subword_start_end(answer["start_word_position"], answer["end_word_position"], subword_idx2word_idx)
+                if subword_start == -1:
+                    continue
                 features["image"].append(file)
                 features["input_ids"].append(input_ids)
                 # features["attention_mask"].append(tokenized_res["attention_mask"])
-                features["bbox"].append(tokenized_res["bbox"][0])
+                # features["bbox"].append(tokenized_res["bbox"][0])
+                boxes_norms = []
+                for box in tokenized_res["bbox"][0]:
+                    box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
+                    assert box[2] >= box[0]
+                    assert box[3] >= box[1]
+                    assert box_norm[2] >= box_norm[0]
+                    assert box_norm[3] >= box_norm[1]
+                    boxes_norms.append(box_norm)
+                features["bbox"].append(boxes_norms)
                 features["start_positions"].append(subword_start)
                 features["end_positions"].append(subword_end)
                 current_metadata["answer"] = answer
                 current_metadata["question"] = question
+                current_metadata["num_question_tokens"] = num_question_tokens
+                current_metadata["words"] = words
+                current_metadata["subword_idx2word_idx"] = subword_idx2word_idx
                 current_metadata["questionId"] = examples["questionId"][idx]
                 current_metadata["data_split"] = examples["data_split"][idx]
                 features["metadata"].append(current_metadata)
@@ -85,15 +107,27 @@ def tokenize_docvqa(examples,
                     final_start_word_pos = answer["start_word_position"]
                     final_end_word_pos = answer["end_word_position"]
                     break
-            subword_start, subword_end = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx)
+            subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx)
             features["image"].append(file)
             features["input_ids"].append(input_ids)
             # features["attention_mask"].append(tokenized_res["attention_mask"])
-            features["bbox"].append(tokenized_res["bbox"][0])
+            # features["bbox"].append(tokenized_res["bbox"][0])
+            boxes_norms = []
+            for box in tokenized_res["bbox"][0]:
+                box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
+                assert box[2] >= box[0]
+                assert box[3] >= box[1]
+                assert box_norm[2] >= box_norm[0]
+                assert box_norm[3] >= box_norm[1]
+                boxes_norms.append(box_norm)
+            features["bbox"].append(boxes_norms)
             features["start_positions"].append(subword_start)
             features["end_positions"].append(subword_end)
             current_metadata["answer"] = original_answers
             current_metadata["question"] = question
+            current_metadata["num_question_tokens"] = num_question_tokens
+            current_metadata["words"] = words
+            current_metadata["subword_idx2word_idx"] = subword_idx2word_idx
             current_metadata["questionId"] = examples["questionId"][idx]
             current_metadata["data_split"] = examples["data_split"][idx]
             features["metadata"].append(current_metadata)
@@ -114,7 +148,7 @@ class DocVQACollator:
         for feature in batch:
             image = Image.open(feature["image"]).convert("RGB")
             vis_features = self.feature_extractor(images=image, return_tensors='np')["pixel_values"][0]
-            feature['visual_norm_pixels'] = vis_features.tolist()
+            feature['pixel_values'] = vis_features.tolist()
             if 'image' in feature: feature.pop('image')
 
         batch = self.tokenizer.pad(
@@ -131,9 +165,9 @@ if __name__ == '__main__':
     from torch.utils.data import DataLoader
     tokenizer = LayoutLMv3TokenizerFast.from_pretrained('microsoft/layoutlmv3-base')
     dataset = load_from_disk('data/docvqa_cached_extractive_uncased')
-    dataset = DatasetDict({"train": dataset["train"].select(range(100)), "val": dataset['val'].select(range(100))})
+    dataset = DatasetDict({"train": dataset["train"], "val": dataset['val']})
     image_dir = {"train": "data/docvqa/train", "val": "data/docvqa/val", "test": "data/docvqa/test"}
-    new_eval_dataset = dataset["val"].map(tokenize_docvqa,
+    new_eval_dataset = dataset.map(tokenize_docvqa,
                                           fn_kwargs={"tokenizer": tokenizer, "img_dir": image_dir},
                                           batched=True, num_proc=8,
                                           load_from_cache_file=False,
@@ -143,6 +177,6 @@ if __name__ == '__main__':
     # feature_extractor = LayoutLMv3FeatureExtractor(apply_ocr=False, image_mean=[0.5, 0.5, 0.5],
     #                                                image_std=[0.5, 0.5, 0.5])
     collator = DocVQACollator(tokenizer, feature_extractor)
-    loader = DataLoader(new_eval_dataset.remove_columns("metadata"), batch_size=3, collate_fn=collator, num_workers=1)
-    for batch in loader:
-        print(batch.input_ids)
+    # loader = DataLoader(new_eval_dataset.remove_columns("metadata"), batch_size=3, collate_fn=collator, num_workers=1)
+    # for batch in loader:
+    #     print(batch.input_ids)
