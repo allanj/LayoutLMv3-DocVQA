@@ -185,7 +185,7 @@ def postprocess_qa_predictions(
         context = current_meta["words"]
         for pred in predictions:
             offsets = pred.pop("word_ids")
-            pred["text"] = ' '.join(context[offsets[0] : offsets[1]])
+            pred["text"] = ' '.join(context[offsets[0] : offsets[1] + 1])
 
         # In the very rare edge case we have not a single non-null prediction, we create a fake prediction to avoid
         # failure.
