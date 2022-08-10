@@ -1,20 +1,13 @@
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 import os
-import h5py
 from accelerate import Accelerator
 from functools import partial
 from tqdm import tqdm
-from accelerate.utils import pad_across_processes
-from typing import Tuple, Dict
 import random
 import torch
 import numpy as np
 import argparse
-from transformers import PreTrainedTokenizerFast
-from transformers import PreTrainedModel, PreTrainedTokenizerBase, LayoutLMv3ForQuestionAnswering, LayoutLMv3TokenizerFast, LayoutLMv3FeatureExtractor
-import torch.nn as nn
-from PIL import Image
-import json
+from transformers import PreTrainedModel, LayoutLMv3ForQuestionAnswering, LayoutLMv3TokenizerFast, LayoutLMv3FeatureExtractor
 from src.utils import get_optimizers, create_and_fill_np_array, write_data, anls_metric_str, postprocess_qa_predictions
 from src.data.tokenization import tokenize_docvqa, DocVQACollator
 
@@ -23,8 +16,6 @@ accelerator = Accelerator()
 tqdm = partial(tqdm, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}', disable=not accelerator.is_local_main_process)
 
 import logging
-from torchvision.transforms.functional import InterpolationMode
-import torchvision.transforms as T
 from datasets import load_from_disk, DatasetDict, concatenate_datasets
 
 logging.basicConfig(
@@ -93,21 +84,21 @@ def train(args,
             optimizer.step()
             scheduler.step()
             model.zero_grad()
-            if iter % 1000 == 0:
-                accelerator.print(f"epoch: {epoch}, iteration: {iter}, current mean loss: {total_loss / iter:.2f}",
-                                  flush=True)
+        accelerator.print(
+            f"Finish epoch: {epoch}, loss: {total_loss:.2f}, mean loss: {total_loss / len(train_dataloader):.2f}",
+            flush=True)
         if valid_dataloader is not None:
             model.eval()
             anls = evaluate(args=args, valid_dataloader=valid_dataloader, model=model, metadata=val_metadata,
                             res_file = f"results/{args.model_folder}.res.json",
                             err_file = f"results/{args.model_folder}.err.json")
             if anls > best_anls:
-                accelerator.print(f"[Model Info] Saving the best model... with best_accaracy: {anls}")
+                accelerator.print(f"[Model Info] Saving the best model... with best ANLS: {anls}")
                 module = model.module if hasattr(model, 'module') else model
                 os.makedirs(f"model_files/{args.model_folder}/", exist_ok=True)
                 torch.save(module.state_dict(), f"model_files/{args.model_folder}/state_dict.pth")
                 best_anls = anls
-        accelerator.print( f"Finish epoch: {epoch}, loss: {total_loss:.2f}, mean loss: {total_loss / len(train_dataloader):.2f}", flush=True)
+        accelerator.print("****Epoch Separation****")
     return model
 
 def evaluate(args, valid_dataloader: DataLoader, model: PreTrainedModel, metadata, res_file=None, err_file=None):
@@ -140,7 +131,6 @@ def evaluate(args, valid_dataloader: DataLoader, model: PreTrainedModel, metadat
     all_pred_texts = [prediction['answer'] for prediction in prediction_list]
     truth = [meta["original_answer"] for meta in metadata]
     all_anls, anls = anls_metric_str(predictions=all_pred_texts, gold_labels=truth)
-    # anls_score = anls_metric(preds, truth)
     accelerator.print(f"[Info] Average Normalized Lev.S : {anls} ", flush=True)
     if res_file is not None and accelerator.is_main_process:
         accelerator.print(f"Writing results to {res_file} and {err_file}")
@@ -179,15 +169,6 @@ def main():
           num_epochs=args.num_epochs,
           valid_dataloader=valid_dataloader,
           val_metadata=tokenized["val"]["metadata"])
-    ## testing
-    # model = DocUndModel(gen_doc_config)
-    # checkpoint = torch.load("model_files/docvqa_constraint/state_dict.pth", map_location="cpu")
-    # model.load_state_dict(checkpoint, strict=True)
-    # accelerator.print("checkpoint loaded from {}".format(args.init_checkpoint))
-    # model, valid_dataloader = accelerator.prepare(model, valid_dataloader)
-    # evaluate(args=args, valid_dataloader=valid_dataloader, model=model, tokenizer=tokenizer,
-    #                         res_file = f"results/{args.model_folder}.res.json",
-    #                         err_file = f"results/{args.model_folder}.err.json")
 
 
 if __name__ == "__main__":

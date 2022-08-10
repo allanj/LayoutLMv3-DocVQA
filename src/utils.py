@@ -136,7 +136,7 @@ def postprocess_qa_predictions(
     all_nbest_json = collections.OrderedDict()
 
     # Let's loop over all the examples!
-    for example_index, current_meta in enumerate(tqdm(metadata)):
+    for example_index, current_meta in enumerate(metadata):
 
         prelim_predictions = []
 
