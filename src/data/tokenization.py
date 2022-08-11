@@ -69,6 +69,8 @@ def tokenize_docvqa(examples,
                 subword_start, subword_end, num_question_tokens = get_subword_start_end(answer["start_word_position"], answer["end_word_position"], subword_idx2word_idx)
                 if subword_start == -1:
                     continue
+                if subword_end == -1:
+                    subword_end = 511 - 1  ## last is </s>, second last
                 features["image"].append(file)
                 features["input_ids"].append(input_ids)
                 # features["attention_mask"].append(tokenized_res["attention_mask"])
@@ -108,6 +110,8 @@ def tokenize_docvqa(examples,
                     final_end_word_pos = answer["end_word_position"]
                     break
             subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx)
+            if subword_end == -1:
+                subword_end = 511 - 1  ## last is </s>, second last
             features["image"].append(file)
             features["input_ids"].append(input_ids)
             # features["attention_mask"].append(tokenized_res["attention_mask"])

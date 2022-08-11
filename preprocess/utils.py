@@ -1,10 +1,4 @@
-import json
-import glob
-import cv2
-import PIL.Image
-from tqdm import tqdm
 import editdistance
-import argparse
 
 def bbox_string(box, width, length):
     return [
