@@ -29,12 +29,28 @@ Note that the test set from the docvqa repo does not come with the ground-truth 
    | Train / #found spans / #not found | Validation  / #found spans / #not found | Test  |
    |:---------------------------------:|:---------------------------------------:|:-----:|
    |      39,643 / 36,759 / 2,704      |           5,349 / 4,950 / 399           | 5,188 |
-
-3. Run the experiments by
+   
+   __NOTE__: The microsft READ API for OCR is not available. Please contact me if you want to use this dataset. (Thanks @redthing1 giving me the access.)
+   
+3. Run `accelerate config` to configrate your distributed training environment and run the experiments by
    ```
    accelerate launch docvqa_main.py
    ```
+   
+   My distributed training environment: 6 GPUs
+   
+## Current Performance (Improving`:rocket:`)
+| Model |     OCR Engine     | Validation ANLS |
+|:------------------:|:-----:|:---------------:|
+| LayoutLMv3-base     |      built-in      |      68.5%      |
+| LayoutLMv3-base     | Microsoft READ API |      73.1%      |
+
+The performance is still far behind what is reported in the paper. 
+But LayoutLMv3 paper combines `train+dev` and evaluate on test set, they achieve about 78% ANLS.
 
 ## TODO
-- [X] Code for tokenization and Collating.
-- [x] Code for Training (In progress)
+- [X] Code for tokenization and Collating. (`:white_check_mark:`)
+- [x] Code for Training (`:white_check_mark:`)
+- [ ] Further tune the performance by hyperparameters/casing issue
+- [ ] Sliding window to handle the issue that the matched answers are out of the 512 tokens.
+- [ ] Add a decoder for generation

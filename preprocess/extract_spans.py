@@ -163,10 +163,10 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
 
 if __name__ == '__main__':
     all_lowercase = True
-    read_msr = True
+    read_msr = False ## default False, for data with MSR OCR, please contact me.
     dataset = convert_docvqa_to_cache("data/docvqa/train/train_v1.0.json",
                                       "data/docvqa/val/val_v1.0.json",
                                       "data/docvqa/test/test_v1.0.json",
-                                      lowercase=all_lowercase,read_msr_ocr=True)
+                                      lowercase=all_lowercase,read_msr_ocr=read_msr)
     cached_filename = f"data/docvqa_cached_extractive_all_lowercase_{all_lowercase}_msr_{read_msr}"
     dataset.save_to_disk(cached_filename)
