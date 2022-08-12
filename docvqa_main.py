@@ -39,7 +39,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--device", default="cuda:0", type=str)
-    parser.add_argument('--dataset_file', default="data/docvqa_cached_extractive_uncased", type=str)
+    parser.add_argument('--dataset_file', default="data/docvqa_cached_extractive_all_lowercase_True_msr_True", type=str)
     parser.add_argument("--model_folder", default="layoutlmv3-extractive-uncased", type=str)
 
     parser.add_argument("--mode", default="train", type=str, choices=["train", "test"])

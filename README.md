@@ -22,7 +22,7 @@ Note that the test set from the docvqa repo does not come with the ground-truth 
     ```
     python3 -m preprocess.extract_spans
     ```
-   Then you will get something called ``
+   Then you will get a processed called `docvqa_cached_extractive_all_lowercase_True_msr_True`
    More details about the statistics after preprocessing, Check out [here](/docs/preprocess.md).
    The final statistics about the number of spans founded is as follows:
 
@@ -30,7 +30,11 @@ Note that the test set from the docvqa repo does not come with the ground-truth 
    |:---------------------------------:|:---------------------------------------:|:-----:|
    |      39,643 / 36,759 / 2,704      |           5,349 / 4,950 / 399           | 5,188 |
 
+3. Run the experiments by
+   ```
+   accelerate launch docvqa_main.py
+   ```
 
 ## TODO
 - [X] Code for tokenization and Collating.
-- [ ] Code for Training (In progress)
+- [x] Code for Training (In progress)
