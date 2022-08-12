@@ -10,6 +10,7 @@ import argparse
 from transformers import PreTrainedModel, LayoutLMv3ForQuestionAnswering, LayoutLMv3TokenizerFast, LayoutLMv3FeatureExtractor
 from src.utils import get_optimizers, create_and_fill_np_array, write_data, anls_metric_str, postprocess_qa_predictions
 from src.data.tokenization import tokenize_docvqa, DocVQACollator
+from accelerate.utils import set_seed
 
 accelerator = Accelerator()
 
@@ -27,13 +28,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-def set_seed(args):
-    process_index = accelerator.process_index
-    random.seed(args.seed + process_index)
-    np.random.seed(args.seed + process_index)
-    torch.manual_seed(args.seed + process_index)
-    if 'cuda' in args.device:
-        torch.cuda.manual_seed_all(args.seed + process_index)
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -61,11 +55,10 @@ def train(args,
           num_epochs: int, val_metadata,
           valid_dataloader: DataLoader = None,
           ):
-    gradient_accumulation_steps = 1
-    t_total = int(len(train_dataloader) // gradient_accumulation_steps * num_epochs)
+    t_total = int(len(train_dataloader) * num_epochs)
     t_total = int(t_total // accelerator.num_processes)
 
-    optimizer, scheduler = get_optimizers(model, args.learning_rate, t_total, warmup_step=0, eps=1e-8)
+    optimizer, scheduler = get_optimizers(model=model, learning_rate=args.learning_rate, num_training_steps=t_total, warmup_step=0, eps=1e-8)
     model, optimizer, train_dataloader, valid_dataloader = accelerator.prepare(model, optimizer, train_dataloader, valid_dataloader)
 
     best_anls = -1
@@ -139,7 +132,7 @@ def evaluate(args, valid_dataloader: DataLoader, model: PreTrainedModel, metadat
 
 def main():
     args = parse_arguments()
-    set_seed(args)
+    set_seed(args.seed, device_specific=True)
     pretrained_model_name = 'microsoft/layoutlmv3-base'
     tokenizer = LayoutLMv3TokenizerFast.from_pretrained(pretrained_model_name)
     feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained(pretrained_model_name, apply_ocr=False)
