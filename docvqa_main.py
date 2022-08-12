@@ -141,8 +141,9 @@ def main():
     # dataset = DatasetDict({"train": dataset["train"].select(range(100)), "val": dataset['val'].select(range(100))})
     dataset = DatasetDict({"train": dataset["train"], "val": dataset['val']})
     image_dir = {"train": "data/docvqa/train", "val": "data/docvqa/val", "test": "data/docvqa/test"}
+    use_msr = "msr_True" in args.dataset_file
     tokenized = dataset.map(tokenize_docvqa,
-                            fn_kwargs={"tokenizer": tokenizer, "img_dir": image_dir},
+                            fn_kwargs={"tokenizer": tokenizer, "img_dir": image_dir, "use_msr_ocr": use_msr},
                             batched=True, num_proc=8,
                             load_from_cache_file=True,
                             # cache_file_names={

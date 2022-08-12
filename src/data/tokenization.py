@@ -30,7 +30,8 @@ def tokenize_docvqa(examples,
                     tokenizer: LayoutLMv3TokenizerFast,
                     img_dir: Dict[str, str],
                     add_metadata: bool = True,
-                    combine_train_val_as_train: bool = False):
+                    combine_train_val_as_train: bool = False,
+                    use_msr_ocr: bool = False)
     """
 
     :param examples:
@@ -59,8 +60,9 @@ def tokenize_docvqa(examples,
         input_ids = tokenized_res["input_ids"][0]
 
         subword_idx2word_idx = tokenized_res.encodings[0].word_ids
-        img = cv2.imread(file)
-        height, width = img.shape[:2]
+        if not use_msr_ocr:
+            img = cv2.imread(file)
+            height, width = img.shape[:2]
         if current_split == "train" or (current_split == "val" and combine_train_val_as_train):
             # for troaining, we treat instances with multiple answers as multiple instances
             for answer in answer_list:
@@ -77,11 +79,14 @@ def tokenize_docvqa(examples,
                 # features["bbox"].append(tokenized_res["bbox"][0])
                 boxes_norms = []
                 for box in tokenized_res["bbox"][0]:
-                    box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
-                    assert box[2] >= box[0]
-                    assert box[3] >= box[1]
-                    assert box_norm[2] >= box_norm[0]
-                    assert box_norm[3] >= box_norm[1]
+                    if use_msr_ocr:
+                        box_norm = box
+                    else:
+                        box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
+                        assert box[2] >= box[0]
+                        assert box[3] >= box[1]
+                        assert box_norm[2] >= box_norm[0]
+                        assert box_norm[3] >= box_norm[1]
                     boxes_norms.append(box_norm)
                 features["bbox"].append(boxes_norms)
                 features["start_positions"].append(subword_start)
@@ -110,19 +115,20 @@ def tokenize_docvqa(examples,
                     final_end_word_pos = answer["end_word_position"]
                     break
             subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx)
-            if subword_end == -1:
-                subword_end = 511 - 1  ## last is </s>, second last
             features["image"].append(file)
             features["input_ids"].append(input_ids)
             # features["attention_mask"].append(tokenized_res["attention_mask"])
             # features["bbox"].append(tokenized_res["bbox"][0])
             boxes_norms = []
             for box in tokenized_res["bbox"][0]:
-                box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
-                assert box[2] >= box[0]
-                assert box[3] >= box[1]
-                assert box_norm[2] >= box_norm[0]
-                assert box_norm[3] >= box_norm[1]
+                if use_msr_ocr:
+                    box_norm = box
+                else:
+                    box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
+                    assert box[2] >= box[0]
+                    assert box[3] >= box[1]
+                    assert box_norm[2] >= box_norm[0]
+                    assert box_norm[3] >= box_norm[1]
                 boxes_norms.append(box_norm)
             features["bbox"].append(boxes_norms)
             features["start_positions"].append(subword_start)
