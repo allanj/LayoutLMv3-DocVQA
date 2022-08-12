@@ -39,7 +39,7 @@ Note that the test set from the docvqa repo does not come with the ground-truth 
    
    My distributed training environment: 6 GPUs
    
-## Current Performance (Improving`:rocket:`)
+## Current Performance (Improving :rocket:)
 | Model |     OCR Engine     | Validation ANLS |
 |:------------------:|:-----:|:---------------:|
 | LayoutLMv3-base     |      built-in      |      68.5%      |
@@ -49,8 +49,8 @@ The performance is still far behind what is reported in the paper.
 But LayoutLMv3 paper combines `train+dev` and evaluate on test set, they achieve about 78% ANLS.
 
 ## TODO
-- [X] Code for tokenization and Collating. (`:white_check_mark:`)
-- [x] Code for Training (`:white_check_mark:`)
+- [X] Code for tokenization and Collating. (:white_check_mark:)
+- [x] Code for Training (:white_check_mark:)
 - [ ] Further tune the performance by hyperparameters/casing issue
 - [ ] Sliding window to handle the issue that the matched answers are out of the 512 tokens.
 - [ ] Add a decoder for generation
