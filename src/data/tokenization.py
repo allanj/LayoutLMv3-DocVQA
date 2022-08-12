@@ -31,7 +31,7 @@ def tokenize_docvqa(examples,
                     img_dir: Dict[str, str],
                     add_metadata: bool = True,
                     combine_train_val_as_train: bool = False,
-                    use_msr_ocr: bool = False)
+                    use_msr_ocr: bool = False):
     """
 
     :param examples:
