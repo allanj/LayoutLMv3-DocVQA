@@ -56,7 +56,6 @@ def train(args,
           valid_dataloader: DataLoader = None,
           ):
     t_total = int(len(train_dataloader) * num_epochs)
-    t_total = int(t_total // accelerator.num_processes)
 
     optimizer, scheduler = get_optimizers(model=model, learning_rate=args.learning_rate, num_training_steps=t_total, warmup_step=0, eps=1e-8)
     model, optimizer, train_dataloader, valid_dataloader = accelerator.prepare(model, optimizer, train_dataloader, valid_dataloader)
@@ -76,6 +75,7 @@ def train(args,
             accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             optimizer.step()
             scheduler.step()
+            optimizer.zero_grad()
             model.zero_grad()
         accelerator.print(
             f"Finish epoch: {epoch}, loss: {total_loss:.2f}, mean loss: {total_loss / len(train_dataloader):.2f}",
