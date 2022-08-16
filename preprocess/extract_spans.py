@@ -122,7 +122,10 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
             new_all_data['words'].append(text)
             new_all_data['layout'].append(layout)
             if new_answers is not None:
-                processed_answers = extract_start_end_index(new_answers, text)
+                ## lowercase everything for matching
+                before_processed_text = [w.lower() for w in text]
+                before_processed_new_answers = [a.lower() for a in new_answers]
+                processed_answers = extract_start_end_index(before_processed_new_answers, before_processed_text)
             else:
                 processed_answers = [{
                     "start_word_position": -1,
@@ -149,7 +152,7 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
                 all_original_accepted.append(new_answers)
         # NOTE: check all extracted ANLS
         if "test" not in file:
-            _, anls = anls_metric_str(predictions=all_extracted_not_clean,gold_labels=all_original_accepted)
+            _, anls = anls_metric_str(predictions=all_extracted_not_clean, gold_labels=all_original_accepted)
             print(f"Current ANLS: {anls}")
         total_num = len(new_all_data["questionId"])
         print(f"{split} has {total_num} questions, "
@@ -162,8 +165,8 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
 
 
 if __name__ == '__main__':
-    all_lowercase = True
-    read_msr = False ## default False, for data with MSR OCR, please contact me.
+    all_lowercase = False
+    read_msr = True ## default False, for data with MSR OCR, please contact me.
     dataset = convert_docvqa_to_cache("data/docvqa/train/train_v1.0.json",
                                       "data/docvqa/val/val_v1.0.json",
                                       "data/docvqa/test/test_v1.0.json",
