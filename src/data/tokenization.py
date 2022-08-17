@@ -31,7 +31,8 @@ def tokenize_docvqa(examples,
                     img_dir: Dict[str, str],
                     add_metadata: bool = True,
                     combine_train_val_as_train: bool = False,
-                    use_msr_ocr: bool = False):
+                    use_msr_ocr: bool = False,
+                    use_generation: bool = False):
     """
 
     :param examples:
@@ -43,6 +44,8 @@ def tokenize_docvqa(examples,
     :return:
     """
     features = {"input_ids": [], "image":[], "bbox":[], "start_positions": [], "end_positions":[],  "metadata": []}
+    if use_generation:
+        features["labels"] = []
     current_split = examples["data_split"][0]
     for idx, (question, image_path, words, layout) in enumerate(zip(examples["question"], examples["image"], examples["words"], examples["layout"])):
         current_metadata = {}
@@ -56,8 +59,11 @@ def tokenize_docvqa(examples,
         tokenized_res = tokenizer.encode_plus(text=question, text_pair=words, boxes=layout, add_special_tokens=True,
                                               return_tensors="pt", max_length=512, truncation="only_second",
                                               return_offsets_mapping=True)
-
         input_ids = tokenized_res["input_ids"][0]
+        if use_generation:
+            answer_ids = tokenizer.batch_encode_plus([[ans] for ans in original_answer], boxes = [[0,0,0,0] for _ in range(len(original_answer))], add_special_tokens=True, max_length=100)["input_ids"]
+        else:
+            answer_ids = [[0] for _ in range(len(original_answer))]
 
         subword_idx2word_idx = tokenized_res.encodings[0].word_ids
         if not use_msr_ocr:
@@ -65,18 +71,18 @@ def tokenize_docvqa(examples,
             height, width = img.shape[:2]
         if current_split == "train" or (current_split == "val" and combine_train_val_as_train):
             # for troaining, we treat instances with multiple answers as multiple instances
-            for answer in answer_list:
-                if answer["start_word_position"] == -1:
+            for answer, label_ids in zip(answer_list, answer_ids):
+                if answer["start_word_position"] == -1 and not use_generation:
                     continue
                 subword_start, subword_end, num_question_tokens = get_subword_start_end(answer["start_word_position"], answer["end_word_position"], subword_idx2word_idx)
-                if subword_start == -1:
+                if subword_start == -1  and not use_generation:
                     continue
                 if subword_end == -1:
                     subword_end = 511 - 1  ## last is </s>, second last
                 features["image"].append(file)
                 features["input_ids"].append(input_ids)
-                # features["attention_mask"].append(tokenized_res["attention_mask"])
-                # features["bbox"].append(tokenized_res["bbox"][0])
+                if use_generation:
+                    features["labels"].append(label_ids)
                 boxes_norms = []
                 for box in tokenized_res["bbox"][0]:
                     if use_msr_ocr:
@@ -155,6 +161,13 @@ class DocVQACollator:
 
     def __call__(self, batch: List):
 
+        labels = [feature["labels"] for feature in batch] if "labels" in batch[0].keys() else None
+        if labels is not None:
+            max_label_length = max(len(l) for l in labels)
+            for feature in batch:
+                remainder = [self.tokenizer.pad_token_id] * (max_label_length - len(feature["labels"]))
+                feature["labels"] = feature["labels"] + remainder
+
         for feature in batch:
             image = Image.open(feature["image"]).convert("RGB")
             vis_features = self.feature_extractor(images=image, return_tensors='np')["pixel_values"][0]
@@ -168,7 +181,16 @@ class DocVQACollator:
             return_tensors="pt",
             return_attention_mask=True
         )
+
+        # prepare decoder_input_ids
+        if self.model is not None and hasattr(self.model, "prepare_decoder_input_ids_from_labels"):
+            decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=batch["labels"])
+            batch["decoder_input_ids"] = decoder_input_ids
+            batch.pop("start_positions")
+            batch.pop("end_positions")
+
         return batch
+
 
 if __name__ == '__main__':
     from datasets import load_from_disk, DatasetDict

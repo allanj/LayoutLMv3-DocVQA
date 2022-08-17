@@ -11,6 +11,7 @@ from transformers import PreTrainedModel, LayoutLMv3ForQuestionAnswering, Layout
 from src.utils import get_optimizers, create_and_fill_np_array, write_data, anls_metric_str, postprocess_qa_predictions
 from src.data.tokenization import tokenize_docvqa, DocVQACollator
 from accelerate.utils import set_seed
+from src.layoutlmv3_gen import LayoutLMv3ForConditionalGeneration
 
 accelerator = Accelerator()
 
@@ -43,6 +44,8 @@ def parse_arguments():
     parser.add_argument('--seed', type=int, default=42,  help="random seed for initialization")
     parser.add_argument('--max_grad_norm', default=1.0, type=float, help='gradient clipping max norm')
     parser.add_argument('--fp16', default=True, action='store_true', help="Whether to use 16-bit 32-bit training")
+
+    parser.add_argument('--use_generation', default=0, choices=[0, 1], help="Whether to use generation to perform experiments")
     args = parser.parse_args()
     for k in args.__dict__:
         print(k + ": " + str(args.__dict__[k]))
@@ -50,6 +53,7 @@ def parse_arguments():
 
 
 def train(args,
+          tokenizer: LayoutLMv3TokenizerFast,
           model: PreTrainedModel,
           train_dataloader: DataLoader,
           num_epochs: int, val_metadata,
@@ -82,7 +86,7 @@ def train(args,
             flush=True)
         if valid_dataloader is not None:
             model.eval()
-            anls = evaluate(args=args, valid_dataloader=valid_dataloader, model=model, metadata=val_metadata,
+            anls = evaluate(args=args, tokenizer=tokenizer, valid_dataloader=valid_dataloader, model=model, metadata=val_metadata,
                             res_file = f"results/{args.model_folder}.res.json",
                             err_file = f"results/{args.model_folder}.err.json")
             if anls > best_anls:
@@ -94,34 +98,49 @@ def train(args,
         accelerator.print("****Epoch Separation****")
     return model
 
-def evaluate(args, valid_dataloader: DataLoader, model: PreTrainedModel, metadata, res_file=None, err_file=None):
+def evaluate(args, tokenizer:LayoutLMv3TokenizerFast, valid_dataloader: DataLoader, model: PreTrainedModel, metadata, res_file=None, err_file=None):
     model.eval()
-    all_start_logits = []
-    all_end_logits = []
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=bool(args.fp16)):
-        for index, batch in tqdm(enumerate(valid_dataloader), desc="--validation", total=len(valid_dataloader)):
-            batch.start_positions = None
-            batch.end_positions = None
-            outputs = model(**batch)
-            start_logits = outputs.start_logits
-            end_logits = outputs.end_logits
-            start_logits = accelerator.pad_across_processes(start_logits, dim=1, pad_index=-100)
-            end_logits = accelerator.pad_across_processes(end_logits, dim=1, pad_index=-100)
-            all_start_logits.append(accelerator.gather_for_metrics(start_logits).cpu().numpy())
-            all_end_logits.append(accelerator.gather_for_metrics(end_logits).cpu().numpy())
+    if args.use_generation:
+        all_pred_texts = []
+        with torch.no_grad(), torch.cuda.amp.autocast(enabled=bool(args.fp16)):
+            for index, batch in tqdm(enumerate(valid_dataloader), desc="--validation", total=len(valid_dataloader)):
+                output_ = model(**batch, is_train=False)
+                generated_ids = output_.sequences
+                generated_ids = accelerator.pad_across_processes(generated_ids, dim=1, pad_index=tokenizer.pad_token_id,
+                                                                 pad_first=False)  ## 1 is pad token id
+                generated_ids = accelerator.gather_for_metrics(generated_ids)
+                preds = [tokenizer.decode(g, skip_special_tokens=True, clean_up_tokenization_spaces=True).strip() for g
+                         in
+                         generated_ids]
+                all_pred_texts.extend(preds)
+        prediction_list = all_pred_texts
+    else:
+        all_start_logits = []
+        all_end_logits = []
+        with torch.no_grad(), torch.cuda.amp.autocast(enabled=bool(args.fp16)):
+            for index, batch in tqdm(enumerate(valid_dataloader), desc="--validation", total=len(valid_dataloader)):
+                batch.start_positions = None
+                batch.end_positions = None
+                outputs = model(**batch)
+                start_logits = outputs.start_logits
+                end_logits = outputs.end_logits
+                start_logits = accelerator.pad_across_processes(start_logits, dim=1, pad_index=-100)
+                end_logits = accelerator.pad_across_processes(end_logits, dim=1, pad_index=-100)
+                all_start_logits.append(accelerator.gather_for_metrics(start_logits).cpu().numpy())
+                all_end_logits.append(accelerator.gather_for_metrics(end_logits).cpu().numpy())
 
-    max_len = max([x.shape[1] for x in all_start_logits])  # Get the max_length of the tensor
-    eval_dataset = valid_dataloader.dataset
-    # concatenate the numpy array
-    start_logits_concat = create_and_fill_np_array(all_start_logits, eval_dataset, max_len)
-    end_logits_concat = create_and_fill_np_array(all_end_logits, eval_dataset, max_len)
-    # delete the list of numpy arrays
-    del all_start_logits
-    del all_end_logits
+        max_len = max([x.shape[1] for x in all_start_logits])  # Get the max_length of the tensor
+        eval_dataset = valid_dataloader.dataset
+        # concatenate the numpy array
+        start_logits_concat = create_and_fill_np_array(all_start_logits, eval_dataset, max_len)
+        end_logits_concat = create_and_fill_np_array(all_end_logits, eval_dataset, max_len)
+        # delete the list of numpy arrays
+        del all_start_logits
+        del all_end_logits
 
-    outputs_numpy = (start_logits_concat, end_logits_concat)
-    prediction_dict, prediction_list = postprocess_qa_predictions(metadata=metadata, predictions=outputs_numpy)
-    all_pred_texts = [prediction['answer'] for prediction in prediction_list]
+        outputs_numpy = (start_logits_concat, end_logits_concat)
+        prediction_dict, prediction_list = postprocess_qa_predictions(metadata=metadata, predictions=outputs_numpy)
+        all_pred_texts = [prediction['answer'] for prediction in prediction_list]
     truth = [meta["original_answer"] for meta in metadata]
     all_anls, anls = anls_metric_str(predictions=all_pred_texts, gold_labels=truth)
     accelerator.print(f"[Info] Average Normalized Lev.S : {anls} ", flush=True)
@@ -136,14 +155,21 @@ def main():
     pretrained_model_name = 'microsoft/layoutlmv3-base'
     tokenizer = LayoutLMv3TokenizerFast.from_pretrained(pretrained_model_name)
     feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained(pretrained_model_name, apply_ocr=False)
-    collator = DocVQACollator(tokenizer, feature_extractor)
+    if args.use_generation:
+        model = LayoutLMv3ForConditionalGeneration.from_pretrained(pretrained_model_name)
+    else:
+        model = LayoutLMv3ForQuestionAnswering.from_pretrained(pretrained_model_name)
+    collator = DocVQACollator(tokenizer, feature_extractor, model=model)
     dataset = load_from_disk(args.dataset_file)
     # dataset = DatasetDict({"train": dataset["train"].select(range(100)), "val": dataset['val'].select(range(100))})
     dataset = DatasetDict({"train": dataset["train"], "val": dataset['val']})
     image_dir = {"train": "data/docvqa/train", "val": "data/docvqa/val", "test": "data/docvqa/test"}
     use_msr = "msr_True" in args.dataset_file
     tokenized = dataset.map(tokenize_docvqa,
-                            fn_kwargs={"tokenizer": tokenizer, "img_dir": image_dir, "use_msr_ocr": use_msr},
+                            fn_kwargs={"tokenizer": tokenizer,
+                                       "img_dir": image_dir,
+                                       "use_msr_ocr": use_msr,
+                                       "use_generation": bool(args.use_generation)},
                             batched=True, num_proc=8,
                             load_from_cache_file=True,
                             # cache_file_names={
@@ -156,8 +182,9 @@ def main():
                                       num_workers=5, pin_memory=True, collate_fn=collator)
     valid_dataloader = DataLoader(tokenized["val"].remove_columns("metadata"), batch_size=args.batch_size,
                                  collate_fn=collator, num_workers=5, shuffle=False)
-    model = LayoutLMv3ForQuestionAnswering.from_pretrained(pretrained_model_name)
+
     train(args=args,
+          tokenizer=tokenizer,
           model=model,
           train_dataloader=train_dataloader,
           num_epochs=args.num_epochs,
