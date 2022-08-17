@@ -5,130 +5,16 @@ from transformers.models.bart.modeling_bart import shift_tokens_right
 from transformers.models.layoutlmv3.modeling_layoutlmv3 import (
     LayoutLMv3PreTrainedModel,
     LayoutLMv3Encoder,
+    LayoutLMv3Layer,
+    LayoutLMv3Model,
     LayoutLMv3PatchEmbeddings,
     LayoutLMv3Config)
-from transformers.models.roberta.modeling_roberta import RobertaPreTrainedModel, RobertaLayer
+from transformers.models.roberta.modeling_roberta import RobertaPreTrainedModel, RobertaLayer, RobertaConfig
 from transformers.modeling_outputs import Seq2SeqLMOutput, Seq2SeqModelOutput, BaseModelOutputWithPastAndCrossAttentions
 from transformers.utils import logging
 from torch.nn import CrossEntropyLoss
 
 logger = logging.get_logger(__name__)
-
-
-class LayoutLMv3TextEmbeddingsWithOptionalLayout(nn.Module):
-    """
-    LayoutLMv3 text embeddings. Same as `RobertaEmbeddings` but with added spatial (layout) embeddings.
-    """
-
-    def __init__(self, config):
-        super().__init__()
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
-        self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
-
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-        # position_ids (1, len position emb) is contiguous in memory and exported when serialized
-        self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)))
-
-        self.padding_idx = config.pad_token_id
-        self.position_embeddings = nn.Embedding(
-            config.max_position_embeddings, config.hidden_size, padding_idx=self.padding_idx
-        )
-
-        self.x_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.coordinate_size)
-        self.y_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.coordinate_size)
-        self.h_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.shape_size)
-        self.w_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.shape_size)
-
-    def calculate_spatial_position_embeddings(self, bbox):
-        try:
-            left_position_embeddings = self.x_position_embeddings(bbox[:, :, 0])
-            upper_position_embeddings = self.y_position_embeddings(bbox[:, :, 1])
-            right_position_embeddings = self.x_position_embeddings(bbox[:, :, 2])
-            lower_position_embeddings = self.y_position_embeddings(bbox[:, :, 3])
-        except IndexError as e:
-            raise IndexError("The `bbox` coordinate values should be within 0-1000 range.") from e
-
-        h_position_embeddings = self.h_position_embeddings(torch.clip(bbox[:, :, 3] - bbox[:, :, 1], 0, 1023))
-        w_position_embeddings = self.w_position_embeddings(torch.clip(bbox[:, :, 2] - bbox[:, :, 0], 0, 1023))
-
-        # below is the difference between LayoutLMEmbeddingsV2 (torch.cat) and LayoutLMEmbeddingsV1 (add)
-        spatial_position_embeddings = torch.cat(
-            [
-                left_position_embeddings,
-                upper_position_embeddings,
-                right_position_embeddings,
-                lower_position_embeddings,
-                h_position_embeddings,
-                w_position_embeddings,
-            ],
-            dim=-1,
-        )
-        return spatial_position_embeddings
-
-    def create_position_ids_from_input_ids(self, input_ids, padding_idx):
-        """
-        Replace non-padding symbols with their position numbers. Position numbers begin at padding_idx+1. Padding
-        symbols are ignored. This is modified from fairseq's `utils.make_positions`.
-        """
-        # The series of casts and type-conversions here are carefully balanced to both work with ONNX export and XLA.
-        mask = input_ids.ne(padding_idx).int()
-        incremental_indices = (torch.cumsum(mask, dim=1).type_as(mask)) * mask
-        return incremental_indices.long() + padding_idx
-
-    def create_position_ids_from_inputs_embeds(self, inputs_embeds):
-        """
-        We are provided embeddings directly. We cannot infer which are padded so just generate sequential position ids.
-        """
-        input_shape = inputs_embeds.size()[:-1]
-        sequence_length = input_shape[1]
-
-        position_ids = torch.arange(
-            self.padding_idx + 1, sequence_length + self.padding_idx + 1, dtype=torch.long, device=inputs_embeds.device
-        )
-        return position_ids.unsqueeze(0).expand(input_shape)
-
-    def forward(
-        self,
-        input_ids=None,
-        bbox=None,
-        token_type_ids=None,
-        position_ids=None,
-        inputs_embeds=None,
-        use_spatial_embeddings=True,
-    ):
-        if position_ids is None:
-            if input_ids is not None:
-                # Create the position ids from the input token ids. Any padded tokens remain padded.
-                position_ids = self.create_position_ids_from_input_ids(input_ids, self.padding_idx).to(
-                    input_ids.device
-                )
-            else:
-                position_ids = self.create_position_ids_from_inputs_embeds(inputs_embeds)
-
-        if input_ids is not None:
-            input_shape = input_ids.size()
-        else:
-            input_shape = inputs_embeds.size()[:-1]
-
-        if token_type_ids is None:
-            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=self.position_ids.device)
-
-        if inputs_embeds is None:
-            inputs_embeds = self.word_embeddings(input_ids)
-        token_type_embeddings = self.token_type_embeddings(token_type_ids)
-
-        embeddings = inputs_embeds + token_type_embeddings
-        position_embeddings = self.position_embeddings(position_ids)
-        embeddings += position_embeddings
-        if use_spatial_embeddings:
-            spatial_position_embeddings = self.calculate_spatial_position_embeddings(bbox)
-            embeddings = embeddings + spatial_position_embeddings
-
-        embeddings = self.LayerNorm(embeddings)
-        embeddings = self.dropout(embeddings)
-        return embeddings
 
 def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] = None):
     """
@@ -163,8 +49,44 @@ class RobertaDecoder(RobertaPreTrainedModel):
         self.config = config
         config.is_decoder = True
         config.add_cross_attention = True
-        self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(config.decoder_layers)])
+        self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(config.num_hidden_layers)])
         self.embeddings = embeddings
+
+    def forward_embedding(self,
+                input_ids=None,
+                token_type_ids=None,
+                position_ids=None,
+                inputs_embeds=None,
+        ):
+        if position_ids is None:
+            if input_ids is not None:
+                # Create the position ids from the input token ids. Any padded tokens remain padded.
+                position_ids = self.embeddings.create_position_ids_from_input_ids(input_ids, self.embeddings.padding_idx).to(
+                    input_ids.device
+                )
+            else:
+                position_ids = self.embeddings.create_position_ids_from_inputs_embeds(inputs_embeds)
+
+        if input_ids is not None:
+            input_shape = input_ids.size()
+        else:
+            input_shape = inputs_embeds.size()[:-1]
+
+        if token_type_ids is None:
+            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=self.embeddings.position_ids.device)
+
+        if inputs_embeds is None:
+            inputs_embeds = self.embeddings.word_embeddings(input_ids)
+        token_type_embeddings = self.embeddings.token_type_embeddings(token_type_ids)
+
+        embeddings_rep = inputs_embeds + token_type_embeddings
+        position_embeddings = self.embeddings.position_embeddings(position_ids)
+        embeddings_rep += position_embeddings
+
+
+        embeddings_rep = self.embeddings.LayerNorm(embeddings_rep)
+        embeddings_rep = self.embeddings.dropout(embeddings_rep)
+        return embeddings_rep
 
     def forward(
             self,
@@ -208,12 +130,11 @@ class RobertaDecoder(RobertaPreTrainedModel):
         #     print('--', past_key_values[0][0].size())
 
         past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
-        embedding_output = self.embeddings(
+        embedding_output = self.forward_embedding(
             input_ids=input_ids,
             position_ids=position_ids,
             token_type_ids=token_type_ids,
             inputs_embeds=inputs_embeds,
-            use_spatial_embeddings=False,
         )
         # tgt_length = input_shape[1]
         ### Using embedding_output instead of input_embeds (which can be None), to fix None issue since the code only use its dtype
@@ -222,7 +143,7 @@ class RobertaDecoder(RobertaPreTrainedModel):
 
         cross_attention_mask_expanded = _expand_mask(encoder_attention_mask, embedding_output.dtype,
                                                      tgt_len=input_shape[1])
-        decoder_head_mask_expanded = self.get_head_mask(head_mask, self.config.decoder_layers)
+        decoder_head_mask_expanded = self.get_head_mask(head_mask, self.config.num_hidden_layers)
 
         decoder_outputs = self.internal_forward(
             hidden_states=embedding_output,
@@ -349,90 +270,23 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
         super().__init__(config)
         self.config = config
 
-        if config.text_embed:
-            self.embeddings = LayoutLMv3TextEmbeddingsWithOptionalLayout(config)
-
-        if config.visual_embed:
-            # use the default pre-training parameters for fine-tuning (e.g., input_size)
-            # when the input_size is larger in fine-tuning, we will interpolate the position embeddings in forward
-            self.patch_embed = LayoutLMv3PatchEmbeddings(config)
-
-            size = int(config.input_size / config.patch_size)
-            self.cls_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
-            self.pos_embed = nn.Parameter(torch.zeros(1, size * size + 1, config.hidden_size))
-            self.pos_drop = nn.Dropout(p=0.0)
-
-            self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-            self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-            if self.config.has_relative_attention_bias or self.config.has_spatial_attention_bias:
-                self.init_visual_bbox(image_size=(size, size))
-
-            self.norm = nn.LayerNorm(config.hidden_size, eps=1e-6)
-
-        self.encoder = LayoutLMv3Encoder(config)
-        self.decoder = RobertaDecoder(config, self.embeddings)
-
+        self.encoder = LayoutLMv3Model(config)
+        self.embeddings = self.encoder.embeddings
+        roberta_config = RobertaConfig.from_pretrained('roberta-base')
+        self.decoder = RobertaDecoder(roberta_config, self.encoder.embeddings)
         self.init_weights()
 
     def get_input_embeddings(self):
-        return self.embeddings.word_embeddings
+        return self.encoder.embeddings.word_embeddings
+
+    def get_encoder(self):
+        return self.encoder
+
+    def get_decoder(self):
+        return self.decoder
 
     def set_input_embeddings(self, value):
-        self.embeddings.word_embeddings = value
-
-    def _prune_heads(self, heads_to_prune):
-        """
-        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
-        class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
-
-    def init_visual_bbox(self, image_size=(14, 14), max_len=1000):
-        """
-        Create the bounding boxes for the visual (patch) tokens.
-        """
-        visual_bbox_x = torch.div(
-            torch.arange(0, max_len * (image_size[1] + 1), max_len), image_size[1], rounding_mode="trunc"
-        )
-        visual_bbox_y = torch.div(
-            torch.arange(0, max_len * (image_size[0] + 1), max_len), image_size[0], rounding_mode="trunc"
-        )
-        visual_bbox = torch.stack(
-            [
-                visual_bbox_x[:-1].repeat(image_size[0], 1),
-                visual_bbox_y[:-1].repeat(image_size[1], 1).transpose(0, 1),
-                visual_bbox_x[1:].repeat(image_size[0], 1),
-                visual_bbox_y[1:].repeat(image_size[1], 1).transpose(0, 1),
-            ],
-            dim=-1,
-        ).view(-1, 4)
-
-        cls_token_box = torch.tensor([[0 + 1, 0 + 1, max_len - 1, max_len - 1]])
-        self.visual_bbox = torch.cat([cls_token_box, visual_bbox], dim=0)
-
-    def calculate_visual_bbox(self, device, dtype, batch_size):
-        visual_bbox = self.visual_bbox.repeat(batch_size, 1, 1)
-        visual_bbox = visual_bbox.to(device).type(dtype)
-        return visual_bbox
-
-    def forward_image(self, pixel_values):
-        embeddings = self.patch_embed(pixel_values)
-
-        # add [CLS] token
-        batch_size, seq_len, _ = embeddings.size()
-        cls_tokens = self.cls_token.expand(batch_size, -1, -1)
-        embeddings = torch.cat((cls_tokens, embeddings), dim=1)
-
-        # add position embeddings
-        if self.pos_embed is not None:
-            embeddings = embeddings + self.pos_embed
-
-        embeddings = self.pos_drop(embeddings)
-        embeddings = self.norm(embeddings)
-
-        return embeddings
+        self.encoder.embeddings.word_embeddings = value
 
     def forward(
         self,
@@ -441,6 +295,7 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
         attention_mask=None,
         token_type_ids=None,
         position_ids=None,
+        encoder_outputs=None,
         decoder_input_ids=None,
         head_mask=None,
         inputs_embeds=None,
@@ -449,6 +304,7 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
         output_hidden_states=None,
         use_cache: Optional[bool] = None,
         return_dict=None,
+        **kwargs
     ):
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -456,116 +312,33 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
 
-        if input_ids is not None:
-            input_shape = input_ids.size()
-            batch_size, seq_length = input_shape
-            device = input_ids.device
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-            batch_size, seq_length = input_shape
-            device = inputs_embeds.device
-        elif pixel_values is not None:
-            batch_size = len(pixel_values)
-            device = pixel_values.device
-        else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds or pixel_values")
-
-        if input_ids is not None or inputs_embeds is not None:
-            if attention_mask is None:
-                attention_mask = torch.ones(((batch_size, seq_length)), device=device)
-            if token_type_ids is None:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
-            if bbox is None:
-                bbox = torch.zeros(tuple(list(input_shape) + [4]), dtype=torch.long, device=device)
-
-            embedding_output = self.embeddings(
-                input_ids=input_ids,
-                bbox=bbox,
-                position_ids=position_ids,
-                token_type_ids=token_type_ids,
-                inputs_embeds=inputs_embeds,
-            )
-
-        final_bbox = final_position_ids = None
-        patch_height = patch_width = None
-        if pixel_values is not None:
-            patch_height, patch_width = int(pixel_values.shape[2] / self.config.patch_size), int(
-                pixel_values.shape[3] / self.config.patch_size
-            )
-            visual_embeddings = self.forward_image(pixel_values)
-            visual_attention_mask = torch.ones(
-                (batch_size, visual_embeddings.shape[1]), dtype=torch.long, device=device
-            )
-            if attention_mask is not None:
-                attention_mask = torch.cat([attention_mask, visual_attention_mask], dim=1)
-            else:
-                attention_mask = visual_attention_mask
-
-            if self.config.has_relative_attention_bias or self.config.has_spatial_attention_bias:
-                if self.config.has_spatial_attention_bias:
-                    visual_bbox = self.calculate_visual_bbox(device, dtype=torch.long, batch_size=batch_size)
-                    if bbox is not None:
-                        final_bbox = torch.cat([bbox, visual_bbox], dim=1)
-                    else:
-                        final_bbox = visual_bbox
-
-                visual_position_ids = torch.arange(
-                    0, visual_embeddings.shape[1], dtype=torch.long, device=device
-                ).repeat(batch_size, 1)
-                if input_ids is not None or inputs_embeds is not None:
-                    position_ids = torch.arange(0, input_shape[1], device=device).unsqueeze(0)
-                    position_ids = position_ids.expand(input_shape)
-                    final_position_ids = torch.cat([position_ids, visual_position_ids], dim=1)
-                else:
-                    final_position_ids = visual_position_ids
-
-            if input_ids is not None or inputs_embeds is not None:
-                embedding_output = torch.cat([embedding_output, visual_embeddings], dim=1)
-            else:
-                embedding_output = visual_embeddings
-
-            embedding_output = self.LayerNorm(embedding_output)
-            embedding_output = self.dropout(embedding_output)
-        elif self.config.has_relative_attention_bias or self.config.has_spatial_attention_bias:
-            if self.config.has_spatial_attention_bias:
-                final_bbox = bbox
-            if self.config.has_relative_attention_bias:
-                position_ids = self.embeddings.position_ids[:, : input_shape[1]]
-                position_ids = position_ids.expand_as(input_ids)
-                final_position_ids = position_ids
-
-        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(
-            attention_mask, None, device, dtype=embedding_output.dtype
-        )
-
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x n_heads x N x N
-        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
-        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
-
-        encoder_outputs = self.encoder(
-            embedding_output,
-            bbox=final_bbox,
-            position_ids=final_position_ids,
-            attention_mask=extended_attention_mask,
+        if encoder_outputs is None:
+            encoder_outputs = self.encoder(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
             head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            patch_height=patch_height,
-            patch_width=patch_width,
+            bbox=bbox,
+            pixel_values=pixel_values,
         )
-
-        sequence_output = encoder_outputs[0]
-
+        encoder_hidden_states = encoder_outputs[0]
+        batch_size, seq_len, _ = encoder_hidden_states.size()
+        visual_attention_mask = torch.ones(
+            (batch_size, seq_len - attention_mask.size(1)), dtype=torch.long, device=encoder_hidden_states.device
+        )
+        updated_attention_mask = torch.cat([attention_mask, visual_attention_mask], dim=1)
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
             attention_mask=None,
             encoder_hidden_states=encoder_outputs[0],
-            encoder_attention_mask=attention_mask,
+            encoder_attention_mask=updated_attention_mask, ## use the extended attention mask
             head_mask=None,
             cross_attn_head_mask=None,
             past_key_values=None,
@@ -597,25 +370,24 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
         )
 
 
-
 class LayoutLMv3ForConditionalGeneration(LayoutLMv3PreTrainedModel):
     base_model_prefix = "model"
     _keys_to_ignore_on_load_missing = [r"final_logits_bias", r"lm_head.weight"]
 
     def __init__(self, config: LayoutLMv3Config):
         super().__init__(config)
-        self.model = LayoutLMv3TransformerModel(config)
-        self.register_buffer("final_logits_bias", torch.zeros((1, self.model.shared.num_embeddings)))
-        self.lm_head = nn.Linear(config.d_model, self.model.embeddings.word_embeddings.num_embeddings, bias=False)
+        self.layoutlmv3 = LayoutLMv3TransformerModel(config)
+        self.register_buffer("final_logits_bias", torch.zeros((1, self.layoutlmv3.embeddings.word_embeddings.num_embeddings)))
+        self.lm_head = nn.Linear(config.hidden_size, self.layoutlmv3.embeddings.word_embeddings.num_embeddings, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
 
     def get_encoder(self):
-        return self.model.get_encoder()
+        return self.layoutlmv3.get_encoder()
 
     def get_decoder(self):
-        return self.model.get_decoder()
+        return self.layoutlmv3.get_decoder()
 
     def resize_token_embeddings(self, new_num_tokens: int) -> nn.Embedding:
         new_embeddings = super().resize_token_embeddings(new_num_tokens)
@@ -630,6 +402,9 @@ class LayoutLMv3ForConditionalGeneration(LayoutLMv3PreTrainedModel):
             extra_bias = torch.zeros((1, new_num_tokens - old_num_tokens), device=self.final_logits_bias.device)
             new_bias = torch.cat([self.final_logits_bias, extra_bias], dim=1)
         self.register_buffer("final_logits_bias", new_bias)
+
+    def get_input_embeddings(self):
+        return self.layoutlmv3.get_input_embeddings()
 
     def get_output_embeddings(self):
         return self.lm_head
@@ -669,12 +444,13 @@ class LayoutLMv3ForConditionalGeneration(LayoutLMv3PreTrainedModel):
         """
         if not is_train:
             return self.generate(
-                input_ids=input_ids,
+                inputs=input_ids,
                 attention_mask=attention_mask,
                 bbox=bbox,
                 max_length=100,
                 num_beams=1,
                 use_cache=True,
+                return_dict=return_dict,
                 **kwargs,
             )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
@@ -688,7 +464,7 @@ class LayoutLMv3ForConditionalGeneration(LayoutLMv3PreTrainedModel):
                     labels, self.config.pad_token_id, self.config.decoder_start_token_id
                 )
 
-        outputs = self.model(
+        outputs = self.layoutlmv3(
             input_ids,
             attention_mask=attention_mask,
             bbox=bbox,
@@ -769,3 +545,35 @@ class LayoutLMv3ForConditionalGeneration(LayoutLMv3PreTrainedModel):
                 tuple(past_state.index_select(0, beam_idx) for past_state in layer_past[:2]) + layer_past[2:],
             )
         return reordered_past
+
+
+if __name__ == '__main__':
+    from transformers import RobertaModel, RobertaConfig
+    from transformers import LayoutLMv3TokenizerFast, LayoutLMv3Tokenizer, LayoutLMv3FeatureExtractor, \
+        LayoutLMv3Processor
+    # old = RobertaModel.from_pretrained('roberta-base')
+    #
+    # new_model = RobertaDecoder(RobertaConfig.from_pretrained('roberta-base'))
+    #
+    # new_model.layer.load_state_dict(old.encoder.layer.state_dict(), strict=False)
+
+    model = LayoutLMv3ForConditionalGeneration(LayoutLMv3Config.from_pretrained('microsoft/layoutlmv3-base'))
+    model.config.decoder_start_token_id = model.config.eos_token_id
+    model.config.is_encoder_decoder = True
+    # tokenizer = LayoutLMv3TokenizerFast.from_pretrained('microsoft/layoutlmv3-base')
+    # res = tokenizer.encoder_plus(['Hello', 'world'], boxes = [[0,0,0,0] for _ in range(2)], return_tensors='pt')
+    # print(res)
+    # input_ids = torch.tensor(([]))
+
+    input_ids =  torch.tensor([[0, 20920, 232, 2, 1], [0, 20920, 232, 100, 2]])
+    attention_mask = torch.tensor([[1,1,1,1,0], [1,1,1,1,1]])
+    bbox = torch.tensor([[[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0],  [0, 0, 0, 0],  [0, 0, 0, 0]],
+                         [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0],  [0, 0, 0, 0],  [0, 0, 0, 0]]
+                         ])
+    result = model(input_ids = input_ids, attention_mask = attention_mask, bbox = bbox, is_train=False)
+
+    # from transformers import BartForConditionalGeneration, BartTokenizerFast
+    # bart_model = BartForConditionalGeneration.from_pretrained('facebook/bart-base')
+    # bar_tokenizer = BartTokenizerFast.from_pretrained('facebook/bart-base')
+    # bart_res = bar_tokenizer.batch_encode_plus(["how are you doing"], return_tensors='pt')
+    # bart_result = bart_model.generate(input_ids=bart_res['input_ids'], attention_mask=bart_res['attention_mask'], num_beams=1)

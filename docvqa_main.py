@@ -7,13 +7,15 @@ import random
 import torch
 import numpy as np
 import argparse
-from transformers import PreTrainedModel, LayoutLMv3ForQuestionAnswering, LayoutLMv3TokenizerFast, LayoutLMv3FeatureExtractor
+from transformers import PreTrainedModel, LayoutLMv3ForQuestionAnswering, LayoutLMv3TokenizerFast, LayoutLMv3FeatureExtractor, RobertaModel, LayoutLMv3Config, LayoutLMv3Model
 from src.utils import get_optimizers, create_and_fill_np_array, write_data, anls_metric_str, postprocess_qa_predictions
 from src.data.tokenization import tokenize_docvqa, DocVQACollator
 from accelerate.utils import set_seed
 from src.layoutlmv3_gen import LayoutLMv3ForConditionalGeneration
 
-accelerator = Accelerator()
+from accelerate import DistributedDataParallelKwargs
+ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
 
 tqdm = partial(tqdm, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}', disable=not accelerator.is_local_main_process)
 
@@ -104,8 +106,7 @@ def evaluate(args, tokenizer:LayoutLMv3TokenizerFast, valid_dataloader: DataLoad
         all_pred_texts = []
         with torch.no_grad(), torch.cuda.amp.autocast(enabled=bool(args.fp16)):
             for index, batch in tqdm(enumerate(valid_dataloader), desc="--validation", total=len(valid_dataloader)):
-                output_ = model(**batch, is_train=False)
-                generated_ids = output_.sequences
+                generated_ids = model(**batch, is_train=False)
                 generated_ids = accelerator.pad_across_processes(generated_ids, dim=1, pad_index=tokenizer.pad_token_id,
                                                                  pad_first=False)  ## 1 is pad token id
                 generated_ids = accelerator.gather_for_metrics(generated_ids)
@@ -156,7 +157,12 @@ def main():
     tokenizer = LayoutLMv3TokenizerFast.from_pretrained(pretrained_model_name)
     feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained(pretrained_model_name, apply_ocr=False)
     if args.use_generation:
-        model = LayoutLMv3ForConditionalGeneration.from_pretrained(pretrained_model_name)
+        model = LayoutLMv3ForConditionalGeneration(LayoutLMv3Config.from_pretrained(pretrained_model_name))
+        model.layoutlmv3.encoder.load_state_dict(LayoutLMv3Model.from_pretrained(pretrained_model_name).state_dict())
+        model.config.decoder_start_token_id = model.config.eos_token_id
+        model.config.is_encoder_decoder = True
+        old = RobertaModel.from_pretrained('roberta-base')
+        model.layoutlmv3.decoder.layer.load_state_dict(old.encoder.layer.state_dict(), strict=False)
     else:
         model = LayoutLMv3ForQuestionAnswering.from_pretrained(pretrained_model_name)
     collator = DocVQACollator(tokenizer, feature_extractor, model=model)

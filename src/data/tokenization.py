@@ -44,9 +44,9 @@ def tokenize_docvqa(examples,
     :return:
     """
     features = {"input_ids": [], "image":[], "bbox":[], "start_positions": [], "end_positions":[],  "metadata": []}
-    if use_generation:
-        features["labels"] = []
     current_split = examples["data_split"][0]
+    if use_generation and (current_split == "train" or (current_split == "val" and combine_train_val_as_train)):
+        features["labels"] = []
     for idx, (question, image_path, words, layout) in enumerate(zip(examples["question"], examples["image"], examples["words"], examples["layout"])):
         current_metadata = {}
         file = os.path.join(img_dir[examples["data_split"][idx]], image_path)
@@ -61,7 +61,9 @@ def tokenize_docvqa(examples,
                                               return_offsets_mapping=True)
         input_ids = tokenized_res["input_ids"][0]
         if use_generation:
-            answer_ids = tokenizer.batch_encode_plus([[ans] for ans in original_answer], boxes = [[0,0,0,0] for _ in range(len(original_answer))], add_special_tokens=True, max_length=100)["input_ids"]
+            answer_ids = tokenizer.batch_encode_plus([[ans] for ans in original_answer],
+                                                     boxes = [[0,0,0,0] for _ in range(len(original_answer))],
+                                                     add_special_tokens=True, max_length=100, truncation="longest_first")["input_ids"]
         else:
             answer_ids = [[0] for _ in range(len(original_answer))]
 
@@ -166,7 +168,9 @@ class DocVQACollator:
             max_label_length = max(len(l) for l in labels)
             for feature in batch:
                 remainder = [self.tokenizer.pad_token_id] * (max_label_length - len(feature["labels"]))
-                feature["labels"] = feature["labels"] + remainder
+                feature["label_ids"] = feature["labels"] + remainder
+                # print(feature["labels"])
+                feature.pop("labels")
 
         for feature in batch:
             image = Image.open(feature["image"]).convert("RGB")
@@ -182,15 +186,18 @@ class DocVQACollator:
             return_attention_mask=True
         )
 
-        # prepare decoder_input_ids
+         # prepare decoder_input_ids
         if self.model is not None and hasattr(self.model, "prepare_decoder_input_ids_from_labels"):
-            decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=batch["labels"])
-            batch["decoder_input_ids"] = decoder_input_ids
             batch.pop("start_positions")
             batch.pop("end_positions")
-
+            if "label_ids" in batch:
+                decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=batch["label_ids"])
+                batch["decoder_input_ids"] = decoder_input_ids
+                ## for validation, we don't have "labels
+        if "label_ids" in batch:
+            ## layoutlmv3 tokenizer issue, they don't allow "labels" key as a list..so we did a small trick
+            batch["labels"] = batch.pop("label_ids")
         return batch
-
 
 if __name__ == '__main__':
     from datasets import load_from_disk, DatasetDict
