@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 from typing import Optional, Union, List, Tuple
-from transformers.models.bart.modeling_bart import shift_tokens_right
+from transformers.models.bart.modeling_bart import shift_tokens_right, BartDecoder, BartConfig
 from transformers.models.layoutlmv3.modeling_layoutlmv3 import (
     LayoutLMv3PreTrainedModel,
     LayoutLMv3Encoder,
@@ -261,8 +261,6 @@ class RobertaDecoder(RobertaPreTrainedModel):
 
         return combined_attention_mask
 
-
-
 class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
@@ -272,9 +270,11 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
 
         self.encoder = LayoutLMv3Model(config)
         self.embeddings = self.encoder.embeddings
-        roberta_config = RobertaConfig.from_pretrained('roberta-base')
-        self.decoder = RobertaDecoder(roberta_config, self.encoder.embeddings)
-        self.init_weights()
+        # roberta_config = RobertaConfig.from_pretrained('roberta-base')
+        # self.decoder = RobertaDecoder(roberta_config, self.encoder.embeddings)
+        bart_config = BartConfig.from_pretrained('pretrained_models/bart-base')
+        self.decoder = BartDecoder(bart_config, self.encoder.embeddings.word_embeddings)
+        # self.init_weights()
 
     def get_input_embeddings(self):
         return self.encoder.embeddings.word_embeddings
@@ -297,7 +297,12 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
         position_ids=None,
         encoder_outputs=None,
         decoder_input_ids=None,
+        decoder_attention_mask=None,
         head_mask=None,
+        decoder_head_mask=None,
+        past_key_values=None,
+        cross_attn_head_mask=None,
+        decoder_inputs_embeds=None,
         inputs_embeds=None,
         pixel_values=None,
         output_attentions=None,
@@ -316,18 +321,18 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
 
         if encoder_outputs is None:
             encoder_outputs = self.encoder(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            bbox=bbox,
-            pixel_values=pixel_values,
-        )
+                input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+                bbox=bbox,
+                pixel_values=pixel_values,
+            )
         encoder_hidden_states = encoder_outputs[0]
         batch_size, seq_len, _ = encoder_hidden_states.size()
         visual_attention_mask = torch.ones(
@@ -336,12 +341,13 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
         updated_attention_mask = torch.cat([attention_mask, visual_attention_mask], dim=1)
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
-            attention_mask=None,
+            attention_mask=decoder_attention_mask,
             encoder_hidden_states=encoder_outputs[0],
-            encoder_attention_mask=updated_attention_mask, ## use the extended attention mask
-            head_mask=None,
-            cross_attn_head_mask=None,
-            past_key_values=None,
+            encoder_attention_mask=updated_attention_mask,
+            head_mask=decoder_head_mask,
+            cross_attn_head_mask=cross_attn_head_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=decoder_inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
@@ -350,14 +356,7 @@ class LayoutLMv3TransformerModel(LayoutLMv3PreTrainedModel):
 
         if not return_dict:
             return decoder_outputs + encoder_outputs
-        # if not return_dict:
-        #     return (sequence_output,) + encoder_outputs[1:]
-
-        # return BaseModelOutput(
-        #     last_hidden_state=sequence_output,
-        #     hidden_states=encoder_outputs.hidden_states,
-        #     attentions=encoder_outputs.attentions,
-        # )
+        
         return Seq2SeqModelOutput(
             last_hidden_state=decoder_outputs.last_hidden_state,
             past_key_values=decoder_outputs.past_key_values,
@@ -417,6 +416,7 @@ class LayoutLMv3ForConditionalGeneration(LayoutLMv3PreTrainedModel):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         bbox: Optional[torch.Tensor] = None,
+        pixel_values: Optional[torch.Tensor] = None,
         decoder_input_ids: Optional[torch.LongTensor] = None,
         decoder_attention_mask: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
@@ -444,9 +444,10 @@ class LayoutLMv3ForConditionalGeneration(LayoutLMv3PreTrainedModel):
         """
         if not is_train:
             return self.generate(
-                inputs=input_ids,
+                input_ids=input_ids,
                 attention_mask=attention_mask,
                 bbox=bbox,
+                pixel_values=pixel_values,
                 max_length=100,
                 num_beams=1,
                 use_cache=True,
@@ -560,7 +561,7 @@ if __name__ == '__main__':
     model = LayoutLMv3ForConditionalGeneration(LayoutLMv3Config.from_pretrained('microsoft/layoutlmv3-base'))
     model.config.decoder_start_token_id = model.config.eos_token_id
     model.config.is_encoder_decoder = True
-    # tokenizer = LayoutLMv3TokenizerFast.from_pretrained('microsoft/layoutlmv3-base')
+    tokenizer = LayoutLMv3TokenizerFast.from_pretrained('microsoft/layoutlmv3-base')
     # res = tokenizer.encoder_plus(['Hello', 'world'], boxes = [[0,0,0,0] for _ in range(2)], return_tensors='pt')
     # print(res)
     # input_ids = torch.tensor(([]))
@@ -570,7 +571,15 @@ if __name__ == '__main__':
     bbox = torch.tensor([[[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0],  [0, 0, 0, 0],  [0, 0, 0, 0]],
                          [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0],  [0, 0, 0, 0],  [0, 0, 0, 0]]
                          ])
-    result = model(input_ids = input_ids, attention_mask = attention_mask, bbox = bbox, is_train=False)
+    result = model(input_ids = input_ids, attention_mask = attention_mask, bbox = bbox, pixel_values=torch.randn(2, 3, 224, 224), is_train=False)
+    print(result)
+
+    # from transformers import RobertaTokenizerFast
+    # roberta_tokenizer = RobertaTokenizerFast.from_pretrained('roberta-base')
+    # print(tokenizer.decode(result[0]))
+    # res_str = tokenizer.decode(result[0], skip_special_tokens=True, clean_up_tokenization_spaces=True).strip()
+    # print(res_str)
+
 
     # from transformers import BartForConditionalGeneration, BartTokenizerFast
     # bart_model = BartForConditionalGeneration.from_pretrained('facebook/bart-base')
