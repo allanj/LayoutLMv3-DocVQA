@@ -168,7 +168,7 @@ def main():
     if args.use_generation:
         model = LayoutLMv3ForConditionalGeneration(
             LayoutLMv3Config.from_pretrained(pretrained_model_name, return_dict=True))
-        old = BartModel.from_pretrained('pretrained_models/bart-base')
+        old = BartModel.from_pretrained('facebook/bart-base')
         model.layoutlmv3.decoder.load_state_dict(old.decoder.state_dict())
         model.layoutlmv3.encoder.load_state_dict(LayoutLMv3Model.from_pretrained(pretrained_model_name).state_dict())
         model.config.decoder_start_token_id = model.config.eos_token_id

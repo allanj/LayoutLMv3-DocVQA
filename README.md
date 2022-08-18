@@ -31,20 +31,23 @@ Note that the test set from the docvqa repo does not come with the ground-truth 
    |      39,643 / 36,759 / 2,704      |           5,349 / 4,950 / 399           | 5,188 |
    
    __NOTE__: The microsft READ API for OCR is not available. Please contact me if you want to use this dataset. (Thanks @redthing1 giving me the access.)
-   
-3. Run `accelerate config` to configrate your distributed training environment and run the experiments by
+
+## Usage
+1. Run `accelerate config` to configrate your distributed training environment and run the experiments by
    ```
-   accelerate launch docvqa_main.py
+   accelerate launch docvqa_main.py --use_generation=0
    ```
-   
+   Set `use_generation` to 1 if you want to use the generation model.   
+
    My distributed training environment: 6 GPUs
    
 ## Current Performance (Improving :rocket:)
-|     Model |  Preprocessing   |     OCR Engine     | Validation ANLS |
-|:---------------:|:----------------:|:-----:|:---------------:|
-| LayoutLMv3-base | lowercase inputs |      built-in      |      68.5%      |
-| LayoutLMv3-base | lowercase inputs |   Microsoft READ API |      73.1%      |
-| LayoutLMv3-base |  original cased  |   Microsoft READ API |      72.7%      |
+|             Model              |  Preprocessing   |     OCR Engine     |   Validation ANLS   |
+|:------------------------------:|:----------------:|:-----:|:-------------------:|
+|        LayoutLMv3-base         | lowercase inputs |      built-in      |        68.5%        |
+|        LayoutLMv3-base         | lowercase inputs |   Microsoft READ API |        73.1%        |
+|        LayoutLMv3-base         |  original cased  |   Microsoft READ API |        72.7%        |
+| LayoutLMv3-base + Bart Decoder |  lowercase  |   Microsoft READ API | 72.4% (in progress) |
 
 The performance is still far behind what is reported in the paper. 
 But LayoutLMv3 paper combines `train+dev` and evaluate on test set, they achieve about 78% ANLS.
@@ -52,6 +55,6 @@ But LayoutLMv3 paper combines `train+dev` and evaluate on test set, they achieve
 ## TODO
 - [X] Code for tokenization and Collating. (:white_check_mark:)
 - [x] Code for Training (:white_check_mark:)
-- [x] Further tune the performance by hyperparameters/casing issue
+- [x] Further tune the performance by hyperparameters/casing issue (:white_check_mark:)
+- [x] Add a decoder for generation (:white_check_mark:)
 - [ ] Sliding window to handle the issue that the matched answers are out of the 512 tokens.
-- [ ] Add a decoder for generation
