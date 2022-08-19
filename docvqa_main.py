@@ -50,7 +50,6 @@ def parse_arguments():
     parser.add_argument('--fp16', default=True, action='store_true', help="Whether to use 16-bit 32-bit training")
 
     parser.add_argument('--use_generation', default=0, choices=[0, 1], help="Whether to use generation to perform experiments")
-    parser.add_argument('--combine_train_val', default=0, choices=[0, 1], help="Whether to combine train and val data")
     args = parser.parse_args()
     for k in args.__dict__:
         print(k + ": " + str(args.__dict__[k]))
@@ -183,9 +182,7 @@ def main():
         model = LayoutLMv3ForQuestionAnswering.from_pretrained(pretrained_model_name)
     collator = DocVQACollator(tokenizer, feature_extractor, model=model)
     dataset = load_from_disk(args.dataset_file)
-    if not args.combine_train_val:
-        # dataset = DatasetDict({"train": dataset["train"].select(range(100)), "val": dataset['val'].select(range(100))})
-        dataset = DatasetDict({"train": dataset["train"], "val": dataset['val']})
+    # dataset = DatasetDict({"train": dataset["train"].select(range(100)), "val": dataset['val'].select(range(100)), "test": dataset['test'].select(range(100))})
     image_dir = {"train": "data/docvqa/train", "val": "data/docvqa/val", "test": "data/docvqa/test"}
     use_msr = "msr_True" in args.dataset_file
     tokenized = dataset.map(tokenize_docvqa,
@@ -203,12 +200,10 @@ def main():
                             # },
                             remove_columns=dataset["val"].column_names
                             )
-    if args.combine_train_val:
-        tokenized = DatasetDict({"train": concatenate_datasets([tokenized["train"], tokenized['val']]), "val": tokenized['test']})
     train_dataloader = DataLoader(tokenized["train"].remove_columns("metadata"), batch_size=args.batch_size,
                                   shuffle=True, num_workers=5, pin_memory=True, collate_fn=collator)
-    valid_dataloader = None if args.combine_train_val else DataLoader(tokenized["val"].remove_columns("metadata"), batch_size=args.batch_size,
-                                                                      collate_fn=collator, num_workers=5, shuffle=False)
+    valid_dataloader = DataLoader(tokenized["val"].remove_columns("metadata"), batch_size=args.batch_size,
+                                                    collate_fn=collator, num_workers=5, shuffle=False)
     if args.mode == "train":
         train(args=args,
               tokenizer=tokenizer,
@@ -218,10 +213,12 @@ def main():
               valid_dataloader=valid_dataloader,
               val_metadata=tokenized["val"]["metadata"])
     else:
+        test_loader = DataLoader(tokenized["test"].remove_columns("metadata"), batch_size=args.batch_size,
+                                                    collate_fn=collator, num_workers=5, shuffle=False)
         checkpoint = torch.load(f"model_files/{args.model_folder}/state_dict.pth", map_location="cpu")
         model.load_state_dict(checkpoint, strict=True)
-        model, valid_dataloader = accelerator.prepare(model, valid_dataloader)
-        evaluate(args, tokenizer, valid_dataloader, model, tokenized["val"]["metadata"],
+        model, test_loader = accelerator.prepare(model, test_loader)
+        evaluate(args, tokenizer, test_loader, model, tokenized["test"]["metadata"],
              res_file=f"results/{args.model_folder}.res.json", err_file=f"results/{args.model_folder}.err.json")
 
 
