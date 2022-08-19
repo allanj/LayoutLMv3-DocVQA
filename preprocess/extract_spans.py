@@ -97,6 +97,10 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
                     new_all_data["original_answer"].append(new_answers)
                 else:
                     new_all_data[key].append(obj[key])
+            if "new_answers" is None:
+                # this only applies to test set.
+                new_all_data["original_answer"].append(["dummy answer"])
+
             ocr_file = f"data/docvqa/{split}/ocr_results/{obj['ucsf_document_id']}_{obj['ucsf_document_page_no']}.json"
             ocr_data = read_data(ocr_file)
             assert len(ocr_data['recognitionResults']) == 1

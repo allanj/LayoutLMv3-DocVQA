@@ -207,10 +207,10 @@ if __name__ == '__main__':
     dataset = DatasetDict({"train": dataset["train"], "val": dataset['val']})
     image_dir = {"train": "data/docvqa/train", "val": "data/docvqa/val", "test": "data/docvqa/test"}
     new_eval_dataset = dataset.map(tokenize_docvqa,
-                                          fn_kwargs={"tokenizer": tokenizer, "img_dir": image_dir},
-                                          batched=True, num_proc=8,
-                                          load_from_cache_file=False,
-                                          remove_columns=dataset["val"].column_names
+                                      fn_kwargs={"tokenizer": tokenizer, "img_dir": image_dir},
+                                      batched=True, num_proc=8,
+                                      load_from_cache_file=False,
+                                      remove_columns=dataset["val"].column_names
                                           )
     feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained('microsoft/layoutlmv3-base', apply_ocr=False)
     # feature_extractor = LayoutLMv3FeatureExtractor(apply_ocr=False, image_mean=[0.5, 0.5, 0.5],
