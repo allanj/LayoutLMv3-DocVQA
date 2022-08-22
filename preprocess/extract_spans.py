@@ -3,37 +3,22 @@ import editdistance
 from collections import defaultdict
 from datasets import DatasetDict, Dataset
 from src.utils import read_data
-from preprocess.utils import get_answer_indices,clean_text
-from typing import List
-import textdistance as td
+from preprocess.utils import get_answer_indices,clean_text, anls_metric_str, better_subfinder
+
 from datasets import load_from_disk
 """
     Convert the DocVQA dataset into dataset cache, which is a dictionary of Dataset objects.
     At the same time, we extract the answer spans.
 """
 
-def anls_metric_str(predictions: List[List[str]], gold_labels: List[List[str]], tau=0.5, rank=0):
-    res = []
-    """
-    predictions: List[List[int]]
-    gold_labels: List[List[List[int]]]: each instances probably have multiple gold labels.
-    """
-    for i, (preds, golds) in enumerate(zip(predictions, gold_labels)):
-        max_s = 0
-        for pred in preds:
-            for gold in golds:
-                dis = td.levenshtein.distance(pred.lower(), gold.lower())
-                max_len = max(len(pred), len(gold))
-                if max_len == 0:
-                    s = 0
-                else:
-                    nl = dis / max_len
-                    s = 1-nl if nl < tau else 0
-                max_s = max(s, max_s)
-        res.append(max_s)
-    return res, sum(res)/len(res)
 
-def extract_start_end_index(current_answers, words):
+def extract_start_end_index_v1(current_answers, words):
+    """
+    Adapted from https://github.com/anisha2102/docvqa/blob/master/create_dataset.py
+    :param current_answers:
+    :param words:
+    :return:
+    """
     ## extracting the start, end index
     processed_answers = []
     ## remove duplicates because of the case of multiple answers
@@ -64,7 +49,53 @@ def extract_start_end_index(current_answers, words):
             "extracted_answer": extracted_answer})
     return processed_answers
 
-def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, read_msr_ocr: bool = False) -> DatasetDict:
+def extract_start_end_index_v2(current_answers, words):
+    """
+    Follwing https://github.com/redthing1/layoutlm_experiments/blob/main/llm_tests/llm_tests/prep_docvqa_xqa.py.
+    :param current_answers:
+    :param words:
+    :return:
+    """
+    ## extracting the start, end index
+    processed_answers = []
+    ## remove duplicates because of the case of multiple answers
+    current_answers = list(set(current_answers))
+    for ans_index in range(len(current_answers)):
+        current_ans = current_answers[ans_index]
+        match, word_idx_start, word_idx_end = better_subfinder(
+            words, current_ans.lower()
+        )
+        if not match:
+            for i in range(len(current_ans)):
+                if len(current_ans) == 1:
+                    # this method won't work for single-character answers
+                    break  # break inner loop
+                # drop the ith character from the answer
+                answer_i = current_ans[:i] + current_ans[i + 1:]
+                # print('Trying: ', i, answer, answer_i, answer_i.lower().split())
+                # check if we can find this one in the context
+                match, word_idx_start, word_idx_end = better_subfinder(
+                    words, answer_i.lower(), try_hard=True
+                )
+                if match:
+                    break  # break inner
+        if match:
+            assert word_idx_start != -1 and word_idx_end != -1
+            extracted_answer = " ".join(words[word_idx_start:word_idx_end + 1])
+        else:
+            word_idx_start = -1
+            word_idx_end = -1
+            extracted_answer = ""
+        ## end index is inclusive
+        processed_answers.append({
+            "start_word_position": word_idx_start,
+            "end_word_position": word_idx_end,
+            "gold_answer": current_ans,
+            "extracted_answer": extracted_answer})
+    return processed_answers
+
+def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, read_msr_ocr: bool = False,
+                            extraction_method="v1") -> DatasetDict:
     data_dict = {}
     for file in [train_file, val_file, test_file]:
         new_all_data = defaultdict(list)
@@ -75,9 +106,13 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
         all_original_accepted = []
         all_extracted_not_clean = []
         msr_data = None
-        if read_msr_ocr and ("test" not in split):
-            msr_file = "data/docvqa_proc_train_t3_ocr" if split == "train" else "data/docvqa_proc_val_t3_msread_ocr"
-            msr_data = load_from_disk(msr_file)
+        if read_msr_ocr:
+            if "test" not in split:
+                msr_file = "data/docvqa_proc_train_t3_ocr" if split == "train" else "data/docvqa_proc_val_t3_msread_ocr"
+                msr_data = load_from_disk(msr_file)
+            else:
+                msr_file = "data/docvqa/test/test_v1.0_msr.json"
+                msr_data = read_data(msr_file)
         for obj_idx, obj in tqdm(enumerate(objs), desc="reading {}".format(split), total=len(objs)):
             msr_obj = None
             if msr_data is not None:
@@ -97,7 +132,7 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
                     new_all_data["original_answer"].append(new_answers)
                 else:
                     new_all_data[key].append(obj[key])
-            if "new_answers" is None:
+            if new_answers is None:
                 # this only applies to test set.
                 new_all_data["original_answer"].append(["dummy answer"])
 
@@ -121,7 +156,7 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
             else:
                 all_text = ' '.join(msr_obj['words'])
                 text = [word.lower() if lowercase else word for word in msr_obj['words']]
-                layout = msr_obj['boxes']
+                layout = msr_obj['boxes'] if "boxes" in msr_obj else msr_obj["layout"]
             new_all_data['ocr_text'].append(all_text)
             new_all_data['words'].append(text)
             new_all_data['layout'].append(layout)
@@ -129,7 +164,10 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
                 ## lowercase everything for matching
                 before_processed_text = [w.lower() for w in text]
                 before_processed_new_answers = [a.lower() for a in new_answers]
-                processed_answers = extract_start_end_index(before_processed_new_answers, before_processed_text)
+                if extraction_method == "v1":
+                    processed_answers = extract_start_end_index_v1(before_processed_new_answers, before_processed_text)
+                elif extraction_method == "v2":
+                    processed_answers = extract_start_end_index_v2(before_processed_new_answers, before_processed_text)
             else:
                 processed_answers = [{
                     "start_word_position": -1,
@@ -169,11 +207,13 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
 
 
 if __name__ == '__main__':
-    all_lowercase = False
+    all_lowercase = True
     read_msr = True ## default False, for data with MSR OCR, please contact me.
+    answer_extraction_method = "v2"
     dataset = convert_docvqa_to_cache("data/docvqa/train/train_v1.0.json",
                                       "data/docvqa/val/val_v1.0.json",
                                       "data/docvqa/test/test_v1.0.json",
-                                      lowercase=all_lowercase,read_msr_ocr=read_msr)
-    cached_filename = f"data/docvqa_cached_extractive_all_lowercase_{all_lowercase}_msr_{read_msr}"
+                                      lowercase=all_lowercase,read_msr_ocr=read_msr,
+                                      extraction_method=answer_extraction_method)
+    cached_filename = f"data/docvqa_cached_extractive_all_lowercase_{all_lowercase}_msr_{read_msr}_extraction_{answer_extraction_method}"
     dataset.save_to_disk(cached_filename)
