@@ -8,12 +8,12 @@ import torch
 import cv2
 from src.utils import bbox_string
 
-def get_subword_start_end(word_start, word_end, subword_idx2word_idx, sequence_ids):
+def get_subword_start_end(word_start, word_end, subword_idx2word_idx):
     ## find the separator between the questions and the text
     start_of_context = -1
     for i in range(len(subword_idx2word_idx)):
-        if sequence_ids[i] and sequence_ids[i] == 1:
-            start_of_context = i
+        if subword_idx2word_idx[i] is None and subword_idx2word_idx[i+1] is None:
+            start_of_context = i+2
             break
     num_question_tokens = start_of_context
     assert start_of_context != -1, "Could not find the start of the context"
@@ -72,7 +72,6 @@ def tokenize_docvqa(examples,
             answer_ids = [[0] for _ in range(len(original_answer))]
 
         subword_idx2word_idx = tokenized_res.encodings[0].word_ids
-        sequence_ids = tokenized_res.encodings[0].sequence_ids ### 0,0,0,1,1,1 represent the segment id of the question and the text
         if not use_msr_ocr:
             img = cv2.imread(file)
             height, width = img.shape[:2]
@@ -127,7 +126,7 @@ def tokenize_docvqa(examples,
                     final_start_word_pos = answer["start_word_position"]
                     final_end_word_pos = answer["end_word_position"]
                     break
-            subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx, sequence_ids)
+            subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx)
             features["image"].append(file)
             features["input_ids"].append(input_ids)
             # features["attention_mask"].append(tokenized_res["attention_mask"])
