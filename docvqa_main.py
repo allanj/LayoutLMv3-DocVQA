@@ -170,7 +170,7 @@ def evaluate(args, tokenizer: LayoutLMv3TokenizerFast, valid_dataloader: DataLoa
 def main():
     args = parse_arguments()
     set_seed(args.seed, device_specific=True)
-    pretrained_model_name = args.pretrained_mdoel_name
+    pretrained_model_name = args.pretrained_model_name
     tokenizer = LayoutLMv3TokenizerFast.from_pretrained(pretrained_model_name)
     feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained(pretrained_model_name, apply_ocr=False)
     if args.use_generation:
