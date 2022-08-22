@@ -12,7 +12,7 @@ from transformers import PreTrainedModel, LayoutLMv3ForQuestionAnswering, Layout
 from src.utils import get_optimizers, create_and_fill_np_array, write_data, anls_metric_str, postprocess_qa_predictions
 from src.data.tokenization import tokenize_docvqa, DocVQACollator
 from accelerate.utils import set_seed
-from src.layoutlmv3_gen import LayoutLMv3ForConditionalGeneration
+from src.layoutlmv3_gen import LayoutLMv3ForConditionalGeneration, CustomizedEncoderDecoderModel
 from accelerate import DistributedDataParallelKwargs
 from transformers import BartModel
 
@@ -38,7 +38,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--device", default="cuda:0", type=str)
-    parser.add_argument('--dataset_file', default="data/docvqa_cached_extractive_all_lowercase_True_msr_True", type=str)
+    parser.add_argument('--dataset_file', default="data/data/docvqa_cached_extractive_all_lowercase_True_msr_True_include_test", type=str)
     parser.add_argument("--model_folder", default="layoutlmv3-extractive-uncased", type=str)
 
     parser.add_argument("--mode", default="train", type=str, choices=["train", "test"])
@@ -50,9 +50,10 @@ def parse_arguments():
     parser.add_argument('--fp16', default=True, action='store_true', help="Whether to use 16-bit 32-bit training")
 
     parser.add_argument('--use_generation', default=0, choices=[0, 1], help="Whether to use generation to perform experiments")
+    parser.add_argument('--decoder', default="facebook/bart-base", help="The pretrained decoder to use if using generation")
     args = parser.parse_args()
     for k in args.__dict__:
-        print(k + ": " + str(args.__dict__[k]))
+        logger.info(k + ": " + str(args.__dict__[k]))
     return args
 
 
@@ -171,13 +172,28 @@ def main():
     tokenizer = LayoutLMv3TokenizerFast.from_pretrained(pretrained_model_name)
     feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained(pretrained_model_name, apply_ocr=False)
     if args.use_generation:
-        model = LayoutLMv3ForConditionalGeneration(
-            LayoutLMv3Config.from_pretrained(pretrained_model_name, return_dict=True))
-        old = BartModel.from_pretrained('facebook/bart-base')
-        model.layoutlmv3.decoder.load_state_dict(old.decoder.state_dict())
-        model.layoutlmv3.encoder.load_state_dict(LayoutLMv3Model.from_pretrained(pretrained_model_name).state_dict())
-        model.config.decoder_start_token_id = model.config.eos_token_id
-        model.config.is_encoder_decoder = True
+        if "bart-base" in args.decoder:
+            model = LayoutLMv3ForConditionalGeneration(
+                LayoutLMv3Config.from_pretrained(pretrained_model_name, return_dict=True))
+            old = BartModel.from_pretrained('facebook/bart-base')
+            model.layoutlmv3.decoder.load_state_dict(old.decoder.state_dict())
+            model.layoutlmv3.encoder.load_state_dict(LayoutLMv3Model.from_pretrained(pretrained_model_name).state_dict())
+            model.config.decoder_start_token_id = model.config.eos_token_id
+            model.config.is_encoder_decoder = True
+            model.config.use_cache = True
+        elif "roberta-base" in args.decoder:
+            ## other approach.
+            model = CustomizedEncoderDecoderModel.from_encoder_decoder_pretrained("microsoft/layoutlmv3-base", "roberta-base")
+            model.config.decoder_start_token_id = tokenizer.cls_token_id
+            model.config.eos_token_id = tokenizer.sep_token_id
+            model.config.pad_token_id = tokenizer.pad_token_id
+            model.config.bos_token_id = tokenizer.cls_token_id
+            model.config.vocab_size = model.config.encoder.vocab_size
+            model.config.max_length = 100
+            model.config.no_repeat_ngram_size = 3
+            model.config.early_stopping = True
+            # model.config.length_penalty = 2.0
+            model.config.num_beams = 1
     else:
         model = LayoutLMv3ForQuestionAnswering.from_pretrained(pretrained_model_name)
     collator = DocVQACollator(tokenizer, feature_extractor, model=model)
@@ -189,7 +205,6 @@ def main():
                             fn_kwargs={"tokenizer": tokenizer,
                                        "img_dir": image_dir,
                                        "use_msr_ocr": use_msr,
-                                       "combine_train_val_as_train": bool(args.combine_train_val),
                                        "use_generation": bool(args.use_generation)},
                             batched=True, num_proc=8,
                             load_from_cache_file=True,

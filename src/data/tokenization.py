@@ -8,12 +8,12 @@ import torch
 import cv2
 from src.utils import bbox_string
 
-def get_subword_start_end(word_start, word_end, subword_idx2word_idx):
+def get_subword_start_end(word_start, word_end, subword_idx2word_idx, sequence_ids):
     ## find the separator between the questions and the text
     start_of_context = -1
     for i in range(len(subword_idx2word_idx)):
-        if subword_idx2word_idx[i] is None and subword_idx2word_idx[i+1] is None:
-            start_of_context = i+2
+        if sequence_ids[i] and sequence_ids[i] == 1:
+            start_of_context = i
             break
     num_question_tokens = start_of_context
     assert start_of_context != -1, "Could not find the start of the context"
@@ -26,11 +26,15 @@ def get_subword_start_end(word_start, word_end, subword_idx2word_idx):
             subword_end = i
     return subword_start, subword_end, num_question_tokens
 
+"""
+handling the out of maximum length reference:
+https://github.com/huggingface/notebooks/blob/main/examples/question_answering.ipynb
+"""
+
 def tokenize_docvqa(examples,
                     tokenizer: LayoutLMv3TokenizerFast,
                     img_dir: Dict[str, str],
                     add_metadata: bool = True,
-                    combine_train_val_as_train: bool = False,
                     use_msr_ocr: bool = False,
                     use_generation: bool = False):
     """
@@ -45,7 +49,7 @@ def tokenize_docvqa(examples,
     """
     features = {"input_ids": [], "image":[], "bbox":[], "start_positions": [], "end_positions":[],  "metadata": []}
     current_split = examples["data_split"][0]
-    if use_generation and (current_split == "train" or (current_split == "val" and combine_train_val_as_train)):
+    if use_generation:
         features["labels"] = []
     for idx, (question, image_path, words, layout) in enumerate(zip(examples["question"], examples["image"], examples["words"], examples["layout"])):
         current_metadata = {}
@@ -68,10 +72,11 @@ def tokenize_docvqa(examples,
             answer_ids = [[0] for _ in range(len(original_answer))]
 
         subword_idx2word_idx = tokenized_res.encodings[0].word_ids
+        sequence_ids = tokenized_res.encodings[0].sequence_ids ### 0,0,0,1,1,1 represent the segment id of the question and the text
         if not use_msr_ocr:
             img = cv2.imread(file)
             height, width = img.shape[:2]
-        if current_split == "train" or (current_split == "val" and combine_train_val_as_train):
+        if current_split == "train":
             # for troaining, we treat instances with multiple answers as multiple instances
             for answer, label_ids in zip(answer_list, answer_ids):
                 if answer["start_word_position"] == -1 and not use_generation:
@@ -122,7 +127,7 @@ def tokenize_docvqa(examples,
                     final_start_word_pos = answer["start_word_position"]
                     final_end_word_pos = answer["end_word_position"]
                     break
-            subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx)
+            subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx, sequence_ids)
             features["image"].append(file)
             features["input_ids"].append(input_ids)
             # features["attention_mask"].append(tokenized_res["attention_mask"])

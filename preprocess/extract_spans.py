@@ -23,6 +23,7 @@ def extract_start_end_index_v1(current_answers, words):
     processed_answers = []
     ## remove duplicates because of the case of multiple answers
     current_answers = list(set(current_answers))
+    all_not_found = True
     for ans_index in range(len(current_answers)):
         current_ans = current_answers[ans_index]
         start_index, end_index, extracted_answer = get_answer_indices(words, current_answers[ans_index])
@@ -42,12 +43,14 @@ def extract_start_end_index_v1(current_answers, words):
             start_index = -1
             end_index = -1
             extracted_answer = ""
+        if start_index != -1:
+            all_not_found = False
         processed_answers.append({
             "start_word_position": start_index,
             "end_word_position": end_index,
             "gold_answer": current_ans,
             "extracted_answer": extracted_answer})
-    return processed_answers
+    return processed_answers, all_not_found
 
 def extract_start_end_index_v2(current_answers, words):
     """
@@ -60,6 +63,7 @@ def extract_start_end_index_v2(current_answers, words):
     processed_answers = []
     ## remove duplicates because of the case of multiple answers
     current_answers = list(set(current_answers))
+    all_not_found = True
     for ans_index in range(len(current_answers)):
         current_ans = current_answers[ans_index]
         match, word_idx_start, word_idx_end = better_subfinder(
@@ -87,12 +91,14 @@ def extract_start_end_index_v2(current_answers, words):
             word_idx_end = -1
             extracted_answer = ""
         ## end index is inclusive
+        if word_idx_start != -1:
+            all_not_found = False
         processed_answers.append({
             "start_word_position": word_idx_start,
             "end_word_position": word_idx_end,
             "gold_answer": current_ans,
             "extracted_answer": extracted_answer})
-    return processed_answers
+    return processed_answers, all_not_found
 
 def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, read_msr_ocr: bool = False,
                             extraction_method="v1") -> DatasetDict:
@@ -165,9 +171,17 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
                 before_processed_text = [w.lower() for w in text]
                 before_processed_new_answers = [a.lower() for a in new_answers]
                 if extraction_method == "v1":
-                    processed_answers = extract_start_end_index_v1(before_processed_new_answers, before_processed_text)
+                    processed_answers, all_not_found = extract_start_end_index_v1(before_processed_new_answers, before_processed_text)
                 elif extraction_method == "v2":
-                    processed_answers = extract_start_end_index_v2(before_processed_new_answers, before_processed_text)
+                    processed_answers, all_not_found = extract_start_end_index_v2(before_processed_new_answers, before_processed_text)
+                elif extraction_method == "v1_v2":
+                    processed_answers, all_not_found = extract_start_end_index_v1(before_processed_new_answers, before_processed_text)
+                    if all_not_found:
+                        processed_answers, _ = extract_start_end_index_v2(before_processed_new_answers, before_processed_text)
+                elif extraction_method == "v2_v1":
+                    processed_answers, all_not_found = extract_start_end_index_v2(before_processed_new_answers, before_processed_text)
+                    if all_not_found:
+                        processed_answers, _ = extract_start_end_index_v1(before_processed_new_answers, before_processed_text)
             else:
                 processed_answers = [{
                     "start_word_position": -1,
@@ -209,11 +223,12 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
 if __name__ == '__main__':
     all_lowercase = True
     read_msr = True ## default False, for data with MSR OCR, please contact me.
-    answer_extraction_method = "v2"
-    dataset = convert_docvqa_to_cache("data/docvqa/train/train_v1.0.json",
-                                      "data/docvqa/val/val_v1.0.json",
-                                      "data/docvqa/test/test_v1.0.json",
-                                      lowercase=all_lowercase,read_msr_ocr=read_msr,
-                                      extraction_method=answer_extraction_method)
-    cached_filename = f"data/docvqa_cached_extractive_all_lowercase_{all_lowercase}_msr_{read_msr}_extraction_{answer_extraction_method}"
-    dataset.save_to_disk(cached_filename)
+    answer_extraction_methods = ["v1_v2", "v2_v1"]
+    for answer_extraction_method in answer_extraction_methods:
+        dataset = convert_docvqa_to_cache("data/docvqa/train/train_v1.0.json",
+                                          "data/docvqa/val/val_v1.0.json",
+                                          "data/docvqa/test/test_v1.0.json",
+                                          lowercase=all_lowercase,read_msr_ocr=read_msr,
+                                          extraction_method=answer_extraction_method)
+        cached_filename = f"data/docvqa_cached_extractive_all_lowercase_{all_lowercase}_msr_{read_msr}_extraction_{answer_extraction_method}"
+        dataset.save_to_disk(cached_filename)
