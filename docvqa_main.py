@@ -16,8 +16,9 @@ from src.layoutlmv3_gen import LayoutLMv3ForConditionalGeneration, CustomizedEnc
 from accelerate import DistributedDataParallelKwargs
 from transformers import BartModel
 
-ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+#ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+# not adding find unused because all are used 
+accelerator = Accelerator(kwargs_handlers=[])
 
 tqdm = partial(tqdm, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}', disable=not accelerator.is_local_main_process)
 
