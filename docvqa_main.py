@@ -51,7 +51,7 @@ def parse_arguments():
 
 
     parser.add_argument('--pretrained_model_name', default='microsoft/layoutlmv3-base', type=str, help="pretrained model name")
-    parser.add_argument('--use_generation', default=0, choices=[0, 1], help="Whether to use generation to perform experiments")
+    parser.add_argument('--use_generation', default=0, type=int, choices=[0, 1], help="Whether to use generation to perform experiments")
     parser.add_argument('--decoder', default="facebook/bart-base", help="The pretrained decoder to use if using generation")
     args = parser.parse_args()
     for k in args.__dict__:
