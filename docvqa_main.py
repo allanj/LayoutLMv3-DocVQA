@@ -49,6 +49,8 @@ def parse_arguments():
     parser.add_argument('--max_grad_norm', default=1.0, type=float, help='gradient clipping max norm')
     parser.add_argument('--fp16', default=True, action='store_true', help="Whether to use 16-bit 32-bit training")
 
+
+    parser.add_argument('--pretrained_model_name', default='microsoft/layoutlmv3-base', type=str, help="pretrained model name")
     parser.add_argument('--use_generation', default=0, choices=[0, 1], help="Whether to use generation to perform experiments")
     parser.add_argument('--decoder', default="facebook/bart-base", help="The pretrained decoder to use if using generation")
     args = parser.parse_args()
@@ -168,14 +170,14 @@ def evaluate(args, tokenizer: LayoutLMv3TokenizerFast, valid_dataloader: DataLoa
 def main():
     args = parse_arguments()
     set_seed(args.seed, device_specific=True)
-    pretrained_model_name = 'microsoft/layoutlmv3-base'
+    pretrained_model_name = args.pretrained_mdoel_name
     tokenizer = LayoutLMv3TokenizerFast.from_pretrained(pretrained_model_name)
     feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained(pretrained_model_name, apply_ocr=False)
     if args.use_generation:
         if "bart-base" in args.decoder:
             model = LayoutLMv3ForConditionalGeneration(
                 LayoutLMv3Config.from_pretrained(pretrained_model_name, return_dict=True))
-            old = BartModel.from_pretrained('facebook/bart-base')
+            old = BartModel.from_pretrained(args.decoder)
             model.layoutlmv3.decoder.load_state_dict(old.decoder.state_dict())
             model.layoutlmv3.encoder.load_state_dict(LayoutLMv3Model.from_pretrained(pretrained_model_name).state_dict())
             model.config.decoder_start_token_id = model.config.eos_token_id
@@ -183,7 +185,7 @@ def main():
             model.config.use_cache = True
         elif "roberta-base" in args.decoder:
             ## other approach.
-            model = CustomizedEncoderDecoderModel.from_encoder_decoder_pretrained("microsoft/layoutlmv3-base", "roberta-base")
+            model = CustomizedEncoderDecoderModel.from_encoder_decoder_pretrained(pretrained_model_name, args.decoder)
             model.config.decoder_start_token_id = tokenizer.cls_token_id
             model.config.eos_token_id = tokenizer.sep_token_id
             model.config.pad_token_id = tokenizer.pad_token_id
