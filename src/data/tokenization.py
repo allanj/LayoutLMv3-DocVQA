@@ -8,12 +8,12 @@ import torch
 import cv2
 from src.utils import bbox_string
 
-def get_subword_start_end(word_start, word_end, subword_idx2word_idx):
+def get_subword_start_end(word_start, word_end, subword_idx2word_idx, sequence_ids):
     ## find the separator between the questions and the text
     start_of_context = -1
-    for i in range(len(subword_idx2word_idx)):
-        if subword_idx2word_idx[i] is None and subword_idx2word_idx[i+1] is None:
-            start_of_context = i+2
+    for i in range(len(sequence_ids)):
+        if sequence_ids[i] == 1:
+            start_of_context = i
             break
     num_question_tokens = start_of_context
     assert start_of_context != -1, "Could not find the start of the context"
@@ -36,17 +36,9 @@ def tokenize_docvqa(examples,
                     img_dir: Dict[str, str],
                     add_metadata: bool = True,
                     use_msr_ocr: bool = False,
-                    use_generation: bool = False):
-    """
+                    use_generation: bool = False,
+                    doc_stride: int = 128): ## doc stride for sliding window, if 0, means no sliding window.
 
-    :param examples:
-    :param tokenizer:
-    :param max_seq_length:
-    :param img_dir: {"train_dir": xxxx, "val_dir":xxx}
-    :param add_metadata:
-    :param shrink_vocab_mapper:
-    :return:
-    """
     features = {"input_ids": [], "image":[], "bbox":[], "start_positions": [], "end_positions":[],  "metadata": []}
     current_split = examples["data_split"][0]
     if use_generation:
@@ -57,40 +49,100 @@ def tokenize_docvqa(examples,
         # img = Image.open(file).convert("RGB")
         answer_list = examples["processed_answers"][idx] if "processed_answers" in examples else []
         original_answer = examples["original_answer"][idx] if "original_answer" in examples else []
-        image_id = f"{examples['ucsf_document_id'][idx]}_{examples['ucsf_document_page_no'][idx]}"
+        # image_id = f"{examples['ucsf_document_id'][idx]}_{examples['ucsf_document_page_no'][idx]}"
         if len(words) == 0 and current_split == "train":
             continue
         tokenized_res = tokenizer.encode_plus(text=question, text_pair=words, boxes=layout, add_special_tokens=True,
-                                              return_tensors="pt", max_length=512, truncation="only_second",
-                                              return_offsets_mapping=True)
-        input_ids = tokenized_res["input_ids"][0]
+                                              max_length=512, truncation="only_second",
+                                              return_offsets_mapping=True, stride=doc_stride, return_overflowing_tokens=True)
+        sample_mapping = tokenized_res.pop("overflow_to_sample_mapping")
+        offset_mapping = tokenized_res.pop("offset_mapping")
+
         if use_generation:
-            answer_ids = tokenizer.batch_encode_plus([[ans] for ans in original_answer],
-                                                     boxes = [[0,0,0,0] for _ in range(len(original_answer))],
+            dummy_boxes = [[[0,0,0,0]] for _ in range(len(original_answer))]
+            answer_ids = tokenizer.batch_encode_plus([[ans] for ans in original_answer], boxes = dummy_boxes,
                                                      add_special_tokens=True, max_length=100, truncation="longest_first")["input_ids"]
         else:
             answer_ids = [[0] for _ in range(len(original_answer))]
-
-        subword_idx2word_idx = tokenized_res.encodings[0].word_ids
         if not use_msr_ocr:
             img = cv2.imread(file)
             height, width = img.shape[:2]
-        if current_split == "train":
-            # for troaining, we treat instances with multiple answers as multiple instances
-            for answer, label_ids in zip(answer_list, answer_ids):
-                if answer["start_word_position"] == -1 and not use_generation:
-                    continue
-                subword_start, subword_end, num_question_tokens = get_subword_start_end(answer["start_word_position"], answer["end_word_position"], subword_idx2word_idx)
-                if subword_start == -1  and not use_generation:
-                    continue
-                if subword_end == -1:
-                    subword_end = 511 - 1  ## last is </s>, second last
+
+        for stride_idx, offsets in enumerate(offset_mapping):
+            input_ids = tokenized_res["input_ids"][stride_idx]
+            subword_idx2word_idx = tokenized_res.encodings[stride_idx].word_ids
+            sequence_ids = tokenized_res.encodings[stride_idx].sequence_ids
+            if current_split == "train":
+                # for training, we treat instances with multiple answers as multiple instances
+                for answer, label_ids in zip(answer_list, answer_ids):
+                    if not use_generation:
+                        if answer["start_word_position"] == -1:
+                            subword_start = 0 ## just use the CLS
+                            subword_end = 0
+                            num_question_tokens = 0
+                        else:
+                            subword_start, subword_end, num_question_tokens = get_subword_start_end(answer["start_word_position"], answer["end_word_position"], subword_idx2word_idx, sequence_ids)
+                            if subword_start == -1 or subword_end == -1:
+                                subword_start = 0  ## just use the CLS
+                                subword_end = 0
+                    else:
+                        features["labels"].append(label_ids)
+                        subword_start = -1  ## useless as in generation
+                        subword_end = -1
+                        num_question_tokens = 0
+
+                    features["image"].append(file)
+                    features["input_ids"].append(input_ids)
+                    boxes_norms = []
+                    for box in tokenized_res["bbox"][stride_idx]:
+                        if use_msr_ocr:
+                            box_norm = box
+                        else:
+                            box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
+                            assert box[2] >= box[0]
+                            assert box[3] >= box[1]
+                            assert box_norm[2] >= box_norm[0]
+                            assert box_norm[3] >= box_norm[1]
+                        boxes_norms.append(box_norm)
+                    features["bbox"].append(boxes_norms)
+                    features["start_positions"].append(subword_start)
+                    features["end_positions"].append(subword_end)
+                    current_metadata["original_answer"] = original_answer
+                    current_metadata["question"] = question
+                    current_metadata["question"] = question
+                    current_metadata["num_question_tokens"] = num_question_tokens ## only used in testing.
+                    current_metadata["words"] = words
+                    current_metadata["subword_idx2word_idx"] = subword_idx2word_idx
+                    current_metadata["questionId"] = examples["questionId"][idx]
+                    current_metadata["data_split"] = examples["data_split"][idx]
+                    features["metadata"].append(current_metadata)
+                    if not add_metadata:
+                        features.pop("metadata")
+            else:
+                # for validation and test, we treat instances with multiple answers as one instance
+                # we just use the first one, and put all the others in the "metadata" field
+                # find the first answer that has start and end
+                # final_start_word_pos = 1 ## if not found, just for nothing, because we don't use it anyway for evaluation
+                # final_end_word_pos = 1
+                # for answer in answer_list:
+                #     if answer["start_word_position"] == -1:
+                #         continue
+                #     else:
+                #         final_start_word_pos = answer["start_word_position"]
+                #         final_end_word_pos = answer["end_word_position"]
+                #         break
+                # subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx, sequence_ids)
+                subword_start, subword_end = -1, -1
+                for i in range(len(sequence_ids)):
+                    if sequence_ids[i] == 1:
+                        num_question_tokens = i
+                        break
                 features["image"].append(file)
                 features["input_ids"].append(input_ids)
-                if use_generation:
-                    features["labels"].append(label_ids)
+                # features["attention_mask"].append(tokenized_res["attention_mask"])
+                # features["bbox"].append(tokenized_res["bbox"][0])
                 boxes_norms = []
-                for box in tokenized_res["bbox"][0]:
+                for box in tokenized_res["bbox"][stride_idx]:
                     if use_msr_ocr:
                         box_norm = box
                     else:
@@ -113,48 +165,6 @@ def tokenize_docvqa(examples,
                 features["metadata"].append(current_metadata)
                 if not add_metadata:
                     features.pop("metadata")
-        else:
-            # for validation and test, we treat instances with multiple answers as one instance
-            # we just use the first one, and put all the others in the "metadata" field
-            # find the first answer that has start and end
-            final_start_word_pos = 1 ## if not found, just for nothing, because we don't use it anyway for evaluation
-            final_end_word_pos = 1
-            for answer in answer_list:
-                if answer["start_word_position"] == -1:
-                    continue
-                else:
-                    final_start_word_pos = answer["start_word_position"]
-                    final_end_word_pos = answer["end_word_position"]
-                    break
-            subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx)
-            features["image"].append(file)
-            features["input_ids"].append(input_ids)
-            # features["attention_mask"].append(tokenized_res["attention_mask"])
-            # features["bbox"].append(tokenized_res["bbox"][0])
-            boxes_norms = []
-            for box in tokenized_res["bbox"][0]:
-                if use_msr_ocr:
-                    box_norm = box
-                else:
-                    box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
-                    assert box[2] >= box[0]
-                    assert box[3] >= box[1]
-                    assert box_norm[2] >= box_norm[0]
-                    assert box_norm[3] >= box_norm[1]
-                boxes_norms.append(box_norm)
-            features["bbox"].append(boxes_norms)
-            features["start_positions"].append(subword_start)
-            features["end_positions"].append(subword_end)
-            current_metadata["original_answer"] = original_answer
-            current_metadata["question"] = question
-            current_metadata["num_question_tokens"] = num_question_tokens
-            current_metadata["words"] = words
-            current_metadata["subword_idx2word_idx"] = subword_idx2word_idx
-            current_metadata["questionId"] = examples["questionId"][idx]
-            current_metadata["data_split"] = examples["data_split"][idx]
-            features["metadata"].append(current_metadata)
-            if not add_metadata:
-                features.pop("metadata")
     return features
 
 

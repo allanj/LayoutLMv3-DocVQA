@@ -23,7 +23,7 @@ accelerator = Accelerator(kwargs_handlers=[])
 tqdm = partial(tqdm, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}', disable=not accelerator.is_local_main_process)
 
 import logging
-from datasets import load_from_disk, DatasetDict, concatenate_datasets
+from datasets import load_from_disk, DatasetDict, concatenate_datasets, Dataset
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -66,6 +66,7 @@ def train(args,
           train_dataloader: DataLoader,
           num_epochs: int, val_metadata,
           valid_dataloader: DataLoader = None,
+          valid_dataset_before_tokenized: Dataset = None
           ):
     t_total = int(len(train_dataloader) * num_epochs)
 
@@ -99,7 +100,7 @@ def train(args,
             anls = evaluate(args=args, tokenizer=tokenizer, valid_dataloader=valid_dataloader, model=model,
                             metadata=val_metadata,
                             res_file=f"results/{args.model_folder}.res.json",
-                            err_file=f"results/{args.model_folder}.err.json")
+                            err_file=f"results/{args.model_folder}.err.json", valid_dataset_before_tokenized=valid_dataset_before_tokenized)
             if anls > best_anls:
                 accelerator.print(f"[Model Info] Saving the best model... with best ANLS: {anls}")
                 module = model.module if hasattr(model, 'module') else model
@@ -115,7 +116,8 @@ def train(args,
     return model
 
 
-def evaluate(args, tokenizer: LayoutLMv3TokenizerFast, valid_dataloader: DataLoader, model: PreTrainedModel, metadata,
+def evaluate(args, tokenizer: LayoutLMv3TokenizerFast, valid_dataloader: DataLoader, model: PreTrainedModel,
+             valid_dataset_before_tokenized: Dataset, metadata,
              res_file=None, err_file=None):
     model.eval()
     if args.use_generation:
@@ -155,7 +157,8 @@ def evaluate(args, tokenizer: LayoutLMv3TokenizerFast, valid_dataloader: DataLoa
         del all_end_logits
 
         outputs_numpy = (start_logits_concat, end_logits_concat)
-        prediction_dict, prediction_list = postprocess_qa_predictions(metadata=metadata, predictions=outputs_numpy)
+        prediction_dict, prediction_list = postprocess_qa_predictions(dataset_before_tokenized = valid_dataset_before_tokenized,
+                                                                      metadata=metadata, predictions=outputs_numpy, n_best_size=10, max_answer_length=50)
         all_pred_texts = [prediction['answer'] for prediction in prediction_list]
     truth = [meta["original_answer"] for meta in metadata]
     accelerator.print(f"prediction: {all_pred_texts[:10]}")
@@ -229,6 +232,7 @@ def main():
               train_dataloader=train_dataloader,
               num_epochs=args.num_epochs,
               valid_dataloader=valid_dataloader,
+              valid_dataset_before_tokenized=dataset["val"],
               val_metadata=tokenized["val"]["metadata"])
     else:
         test_loader = DataLoader(tokenized["test"].remove_columns("metadata"), batch_size=args.batch_size,
@@ -237,7 +241,8 @@ def main():
         model.load_state_dict(checkpoint, strict=True)
         model, test_loader = accelerator.prepare(model, test_loader)
         evaluate(args, tokenizer, test_loader, model, tokenized["test"]["metadata"],
-             res_file=f"results/{args.model_folder}.res.json", err_file=f"results/{args.model_folder}.err.json")
+             res_file=f"results/{args.model_folder}.res.json", err_file=f"results/{args.model_folder}.err.json",
+                 valid_dataset_before_tokenized=dataset["test"])
 
 
 if __name__ == "__main__":

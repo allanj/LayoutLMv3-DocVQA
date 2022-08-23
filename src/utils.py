@@ -85,6 +85,7 @@ def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
 
 
 def postprocess_qa_predictions(
+    dataset_before_tokenized,
     metadata,
     predictions: Tuple[np.ndarray, np.ndarray],
     n_best_size: int = 20,
@@ -128,7 +129,16 @@ def postprocess_qa_predictions(
 
     if len(predictions[0]) != len(metadata):
         raise ValueError(f"Got {len(predictions[0])} predictions and {len(metadata)} samples.")
+    examples = dataset_before_tokenized
 
+    example_id_to_index = {item: idx for idx, item in enumerate(examples["questionId"])}
+    features_per_example = collections.defaultdict(list)
+    for i, feature in enumerate(metadata):
+        features_per_example[example_id_to_index[feature["questionId"]]].append(i)
+
+
+    # Logging.
+    logger.info(f"Post-processing {len(examples)} example predictions split into {len(metadata)} features.")
 
     # The dictionaries we have to fill.
     all_predictions = collections.OrderedDict()
@@ -136,53 +146,69 @@ def postprocess_qa_predictions(
     all_nbest_json = collections.OrderedDict()
 
     # Let's loop over all the examples!
-    for example_index, current_meta in enumerate(metadata):
+    for example_idx, example in enumerate(examples):
+        feature_indices = features_per_example[example_idx]
 
+        min_null_prediction = None
         prelim_predictions = []
 
         # Looping through all the features associated to the current example.
-        # We grab the predictions of the model for this feature.
-        start_logits = all_start_logits[example_index]
-        end_logits = all_end_logits[example_index]
-        # This is what will allow us to map some the positions in our logits to span of texts in the original
-        # context.
-        subword_idx2word_idx = current_meta["subword_idx2word_idx"]
-        num_question_tokens = current_meta["num_question_tokens"]
+        for feature_index in feature_indices:
+            current_meta = metadata[feature_index]
 
-        # Go through all possibilities for the `n_best_size` greater start and end logits.
-        start_indexes = np.argsort(start_logits)[-1 : -n_best_size - 1 : -1].tolist()
-        end_indexes = np.argsort(end_logits)[-1 : -n_best_size - 1 : -1].tolist()
-        for start_index in start_indexes:
-            for end_index in end_indexes:
-                # Don't consider out-of-scope answers, either because the indices are out of bounds or correspond
-                # to part of the input_ids that are not in the context.
-                if (
-                    start_index < num_question_tokens or ## because we do not want to consider answers that are
-                    end_index < num_question_tokens or  ## part of the question.
-                    start_index >= len(subword_idx2word_idx)
-                    or end_index >= len(subword_idx2word_idx)
-                    or subword_idx2word_idx[start_index] is None
-                    or subword_idx2word_idx[end_index] is None
-                ):
-                    continue
-                # Don't consider answers with a length that is either < 0 or > max_answer_length.
-                if end_index < start_index or end_index - start_index + 1 > max_answer_length:
-                    continue
+            # Looping through all the features associated to the current example.
+            # We grab the predictions of the model for this feature.
+            start_logits = all_start_logits[feature_index]
+            end_logits = all_end_logits[feature_index]
 
-                prelim_predictions.append(
-                    {
-                        "word_ids": (subword_idx2word_idx[start_index], subword_idx2word_idx[end_index]),
-                        "score": start_logits[start_index] + end_logits[end_index],
-                        "start_logit": start_logits[start_index],
-                        "end_logit": end_logits[end_index],
-                    }
-                )
+            # This is what will allow us to map some the positions in our logits to span of texts in the original
+            # context.
+            subword_idx2word_idx = current_meta["subword_idx2word_idx"]
+            num_question_tokens = current_meta["num_question_tokens"]
+
+            feature_null_score = start_logits[0] + end_logits[0]
+            if min_null_prediction is None or min_null_prediction["score"] > feature_null_score:
+                min_null_prediction = {
+                    "offsets": (0, 0),
+                    "score": feature_null_score,
+                    "start_logit": start_logits[0],
+                    "end_logit": end_logits[0],
+                }
+
+            # Go through all possibilities for the `n_best_size` greater start and end logits.
+            start_indexes = np.argsort(start_logits)[-1 : -n_best_size - 1 : -1].tolist()
+            end_indexes = np.argsort(end_logits)[-1 : -n_best_size - 1 : -1].tolist()
+            for start_index in start_indexes:
+                for end_index in end_indexes:
+                    # Don't consider out-of-scope answers, either because the indices are out of bounds or correspond
+                    # to part of the input_ids that are not in the context.
+                    if (
+                        start_index < num_question_tokens or ## because we do not want to consider answers that are
+                        end_index < num_question_tokens or  ## part of the question.
+                        start_index >= len(subword_idx2word_idx)
+                        or end_index >= len(subword_idx2word_idx)
+                        or subword_idx2word_idx[start_index] is None
+                        or subword_idx2word_idx[end_index] is None
+                    ):
+                        continue
+                    # Don't consider answers with a length that is either < 0 or > max_answer_length.
+                    if end_index < start_index or end_index - start_index + 1 > max_answer_length:
+                        continue
+
+                    prelim_predictions.append(
+                        {
+                            "word_ids": (subword_idx2word_idx[start_index], subword_idx2word_idx[end_index]),
+                            "score": start_logits[start_index] + end_logits[end_index],
+                            "start_logit": start_logits[start_index],
+                            "end_logit": end_logits[end_index],
+                        }
+                    )
 
         # Only keep the best `n_best_size` predictions.
         predictions = sorted(prelim_predictions, key=lambda x: x["score"], reverse=True)[:n_best_size]
 
         # Use the offsets to gather the answer text in the original context.
-        context = current_meta["words"]
+        context = example["words"]
         for pred in predictions:
             offsets = pred.pop("word_ids")
             pred["text"] = ' '.join(context[offsets[0] : offsets[1] + 1])
@@ -203,13 +229,13 @@ def postprocess_qa_predictions(
             pred["probability"] = prob
 
         # Pick the best prediction. If the null answer is not possible, this is easy.
-        all_predictions[current_meta["questionId"]] = predictions[0]["text"]
+        all_predictions[example["questionId"]] = predictions[0]["text"]
         all_predictions_list.append({
-            "questionId": current_meta["questionId"],
+            "questionId": example["questionId"],
             "answer": predictions[0]["text"],
         })
         # Make `predictions` JSON-serializable by casting np.float back to float.
-        all_nbest_json[current_meta["questionId"]] = [
+        all_nbest_json[example["questionId"]] = [
             {k: (float(v) if isinstance(v, (np.float16, np.float32, np.float64)) else v) for k, v in pred.items()}
             for pred in predictions
         ]
