@@ -213,7 +213,7 @@ def main():
                                        "img_dir": image_dir,
                                        "use_msr_ocr": use_msr,
                                        "use_generation": bool(args.use_generation),
-                                       "stride": args.stride},
+                                       "doc_stride": args.stride},
                             batched=True, num_proc=8,
                             load_from_cache_file=True,
                             # cache_file_names={
