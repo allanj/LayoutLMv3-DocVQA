@@ -54,6 +54,7 @@ def parse_arguments():
     parser.add_argument('--pretrained_model_name', default='microsoft/layoutlmv3-base', type=str, help="pretrained model name")
     parser.add_argument('--use_generation', default=0, type=int, choices=[0, 1], help="Whether to use generation to perform experiments")
     parser.add_argument('--decoder', default="facebook/bart-base", help="The pretrained decoder to use if using generation")
+    parser.add_argument('--stride', default=128, type=int, help="document stride for sliding window, >0 means sliding window, overlapping window")
     args = parser.parse_args()
     for k in args.__dict__:
         logger.info(k + ": " + str(args.__dict__[k]))
@@ -211,7 +212,8 @@ def main():
                             fn_kwargs={"tokenizer": tokenizer,
                                        "img_dir": image_dir,
                                        "use_msr_ocr": use_msr,
-                                       "use_generation": bool(args.use_generation)},
+                                       "use_generation": bool(args.use_generation),
+                                       "stride": args.stride},
                             batched=True, num_proc=8,
                             load_from_cache_file=True,
                             # cache_file_names={
