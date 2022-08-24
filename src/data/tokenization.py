@@ -37,7 +37,8 @@ def tokenize_docvqa(examples,
                     add_metadata: bool = True,
                     use_msr_ocr: bool = False,
                     use_generation: bool = False,
-                    doc_stride: int = 128): ## doc stride for sliding window, if 0, means no sliding window.
+                    doc_stride: int = 128,
+                    ignore_unmatched_answer_span_during_train: bool = True): ## doc stride for sliding window, if 0, means no sliding window.
 
     features = {"input_ids": [], "image":[], "bbox":[], "start_positions": [], "end_positions":[],  "metadata": []}
     current_split = examples["data_split"][0]
@@ -52,11 +53,15 @@ def tokenize_docvqa(examples,
         # image_id = f"{examples['ucsf_document_id'][idx]}_{examples['ucsf_document_page_no'][idx]}"
         if len(words) == 0 and current_split == "train":
             continue
+        return_overflowing_tokens = doc_stride>0
         tokenized_res = tokenizer.encode_plus(text=question, text_pair=words, boxes=layout, add_special_tokens=True,
                                               max_length=512, truncation="only_second",
-                                              return_offsets_mapping=True, stride=doc_stride, return_overflowing_tokens=doc_stride>0)
-        sample_mapping = tokenized_res.pop("overflow_to_sample_mapping")
+                                              return_offsets_mapping=True, stride=doc_stride,
+                                              return_overflowing_tokens=return_overflowing_tokens)
+        # sample_mapping = tokenized_res.pop("overflow_to_sample_mapping")
         offset_mapping = tokenized_res.pop("offset_mapping")
+        if not return_overflowing_tokens:
+            offset_mapping = [offset_mapping]
 
         if use_generation:
             dummy_boxes = [[[0,0,0,0]] for _ in range(len(original_answer))]
@@ -69,7 +74,8 @@ def tokenize_docvqa(examples,
             height, width = img.shape[:2]
 
         for stride_idx, offsets in enumerate(offset_mapping):
-            input_ids = tokenized_res["input_ids"][stride_idx]
+            input_ids = tokenized_res["input_ids"][stride_idx] if return_overflowing_tokens else tokenized_res["input_ids"]
+            bboxes = tokenized_res["bbox"][stride_idx] if return_overflowing_tokens else tokenized_res["bbox"]
             subword_idx2word_idx = tokenized_res.encodings[stride_idx].word_ids
             sequence_ids = tokenized_res.encodings[stride_idx].sequence_ids
             if current_split == "train":
@@ -80,11 +86,19 @@ def tokenize_docvqa(examples,
                             subword_start = 0 ## just use the CLS
                             subword_end = 0
                             num_question_tokens = 0
+                            if ignore_unmatched_answer_span_during_train:
+                                continue
                         else:
                             subword_start, subword_end, num_question_tokens = get_subword_start_end(answer["start_word_position"], answer["end_word_position"], subword_idx2word_idx, sequence_ids)
-                            if subword_start == -1 or subword_end == -1:
+                            if subword_start == -1:
                                 subword_start = 0  ## just use the CLS
                                 subword_end = 0
+                                if ignore_unmatched_answer_span_during_train:
+                                    continue
+                            if subword_end == -1:
+                                ## that means the end position is out of maximum boundary
+                                ## last is </s>, second last
+                                subword_end = 511 - 1
                     else:
                         features["labels"].append(label_ids)
                         subword_start = -1  ## useless as in generation
@@ -94,7 +108,7 @@ def tokenize_docvqa(examples,
                     features["image"].append(file)
                     features["input_ids"].append(input_ids)
                     boxes_norms = []
-                    for box in tokenized_res["bbox"][stride_idx]:
+                    for box in bboxes:
                         box_norm = box if use_msr_ocr else bbox_string([box[0], box[1], box[2], box[3]], width, height)
                         boxes_norms.append(box_norm)
                     features["bbox"].append(boxes_norms)
@@ -121,7 +135,7 @@ def tokenize_docvqa(examples,
                 features["image"].append(file)
                 features["input_ids"].append(input_ids)
                 boxes_norms = []
-                for box in tokenized_res["bbox"][stride_idx]:
+                for box in bboxes:
                     box_norm = box if use_msr_ocr else bbox_string([box[0], box[1], box[2], box[3]], width, height)
                     boxes_norms.append(box_norm)
                 features["bbox"].append(boxes_norms)

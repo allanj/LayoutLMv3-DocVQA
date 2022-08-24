@@ -55,6 +55,7 @@ def parse_arguments():
     parser.add_argument('--use_generation', default=0, type=int, choices=[0, 1], help="Whether to use generation to perform experiments")
     parser.add_argument('--decoder', default="facebook/bart-base", help="The pretrained decoder to use if using generation")
     parser.add_argument('--stride', default=128, type=int, help="document stride for sliding window, >0 means sliding window, overlapping window")
+    parser.add_argument('--ignore_unmatched_span', default=1, type=int, help="ignore unmatched span during training")
     args = parser.parse_args()
     for k in args.__dict__:
         logger.info(k + ": " + str(args.__dict__[k]))
@@ -213,14 +214,10 @@ def main():
                                        "img_dir": image_dir,
                                        "use_msr_ocr": use_msr,
                                        "use_generation": bool(args.use_generation),
-                                       "doc_stride": args.stride},
+                                       "doc_stride": args.stride,
+                                       "ignore_unmatched_answer_span_during_train": bool(args.ignore_unmatched_span)},
                             batched=True, num_proc=8,
                             load_from_cache_file=True,
-                            # cache_file_names={
-                            #     "train": f"{args.dataset_file}/train/cache_all.arrow",
-                            #     "val": f"{args.dataset_file}/val/cache_all.arrow",
-                            #     "test": f"{args.dataset_file}/test/cache_all.arrow",
-                            # },
                             remove_columns=dataset["val"].column_names
                             )
     accelerator.print(tokenized)
