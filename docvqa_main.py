@@ -55,7 +55,7 @@ def parse_arguments():
     parser.add_argument('--use_generation', default=0, type=int, choices=[0, 1], help="Whether to use generation to perform experiments")
     parser.add_argument('--decoder', default="facebook/bart-base", help="The pretrained decoder to use if using generation")
     parser.add_argument('--stride', default=128, type=int, help="document stride for sliding window, >0 means sliding window, overlapping window")
-    parser.add_argument('--ignore_unmatched_span', default=1, type=int, help="ignore unmatched span during training")
+    parser.add_argument('--ignore_unmatched_span', default=1, type=int, help="ignore unmatched span during training, if not ignored, we treat CLS as the start/end.")
     args = parser.parse_args()
     for k in args.__dict__:
         logger.info(k + ": " + str(args.__dict__[k]))
