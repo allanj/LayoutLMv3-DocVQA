@@ -223,6 +223,7 @@ def main():
                             # },
                             remove_columns=dataset["val"].column_names
                             )
+    accelerator.print(tokenized)
     train_dataloader = DataLoader(tokenized["train"].remove_columns("metadata"), batch_size=args.batch_size,
                                   shuffle=True, num_workers=5, pin_memory=True, collate_fn=collator)
     valid_dataloader = DataLoader(tokenized["val"].remove_columns("metadata"), batch_size=args.batch_size,

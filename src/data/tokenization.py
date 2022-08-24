@@ -54,7 +54,7 @@ def tokenize_docvqa(examples,
             continue
         tokenized_res = tokenizer.encode_plus(text=question, text_pair=words, boxes=layout, add_special_tokens=True,
                                               max_length=512, truncation="only_second",
-                                              return_offsets_mapping=True, stride=doc_stride, return_overflowing_tokens=True)
+                                              return_offsets_mapping=True, stride=doc_stride, return_overflowing_tokens=doc_stride>0)
         sample_mapping = tokenized_res.pop("overflow_to_sample_mapping")
         offset_mapping = tokenized_res.pop("offset_mapping")
 
