@@ -240,9 +240,9 @@ def main():
         checkpoint = torch.load(f"model_files/{args.model_folder}/state_dict.pth", map_location="cpu")
         model.load_state_dict(checkpoint, strict=True)
         model, test_loader = accelerator.prepare(model, test_loader)
-        evaluate(args, tokenizer, test_loader, model, tokenized["test"]["metadata"],
-             res_file=f"results/{args.model_folder}.res.json", err_file=f"results/{args.model_folder}.err.json",
-                 valid_dataset_before_tokenized=dataset["test"])
+        evaluate(args=args, tokenizer=tokenizer, valid_dataloader=test_loader, model=model,
+                 valid_dataset_before_tokenized=dataset["test"], metadata=tokenized["test"]["metadata"],
+             res_file=f"results/{args.model_folder}.res.json", err_file=f"results/{args.model_folder}.err.json")
 
 
 if __name__ == "__main__":
