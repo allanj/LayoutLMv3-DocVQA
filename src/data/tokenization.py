@@ -95,20 +95,12 @@ def tokenize_docvqa(examples,
                     features["input_ids"].append(input_ids)
                     boxes_norms = []
                     for box in tokenized_res["bbox"][stride_idx]:
-                        if use_msr_ocr:
-                            box_norm = box
-                        else:
-                            box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
-                            assert box[2] >= box[0]
-                            assert box[3] >= box[1]
-                            assert box_norm[2] >= box_norm[0]
-                            assert box_norm[3] >= box_norm[1]
+                        box_norm = box if use_msr_ocr else bbox_string([box[0], box[1], box[2], box[3]], width, height)
                         boxes_norms.append(box_norm)
                     features["bbox"].append(boxes_norms)
                     features["start_positions"].append(subword_start)
                     features["end_positions"].append(subword_end)
                     current_metadata["original_answer"] = original_answer
-                    current_metadata["question"] = question
                     current_metadata["question"] = question
                     current_metadata["num_question_tokens"] = num_question_tokens ## only used in testing.
                     current_metadata["words"] = words
@@ -121,17 +113,6 @@ def tokenize_docvqa(examples,
             else:
                 # for validation and test, we treat instances with multiple answers as one instance
                 # we just use the first one, and put all the others in the "metadata" field
-                # find the first answer that has start and end
-                # final_start_word_pos = 1 ## if not found, just for nothing, because we don't use it anyway for evaluation
-                # final_end_word_pos = 1
-                # for answer in answer_list:
-                #     if answer["start_word_position"] == -1:
-                #         continue
-                #     else:
-                #         final_start_word_pos = answer["start_word_position"]
-                #         final_end_word_pos = answer["end_word_position"]
-                #         break
-                # subword_start, subword_end, num_question_tokens = get_subword_start_end(final_start_word_pos, final_end_word_pos, subword_idx2word_idx, sequence_ids)
                 subword_start, subword_end = -1, -1
                 for i in range(len(sequence_ids)):
                     if sequence_ids[i] == 1:
@@ -139,18 +120,9 @@ def tokenize_docvqa(examples,
                         break
                 features["image"].append(file)
                 features["input_ids"].append(input_ids)
-                # features["attention_mask"].append(tokenized_res["attention_mask"])
-                # features["bbox"].append(tokenized_res["bbox"][0])
                 boxes_norms = []
                 for box in tokenized_res["bbox"][stride_idx]:
-                    if use_msr_ocr:
-                        box_norm = box
-                    else:
-                        box_norm = bbox_string([box[0], box[1], box[2], box[3]], width, height)
-                        assert box[2] >= box[0]
-                        assert box[3] >= box[1]
-                        assert box_norm[2] >= box_norm[0]
-                        assert box_norm[3] >= box_norm[1]
+                    box_norm = box if use_msr_ocr else bbox_string([box[0], box[1], box[2], box[3]], width, height)
                     boxes_norms.append(box_norm)
                 features["bbox"].append(boxes_norms)
                 features["start_positions"].append(subword_start)
@@ -213,23 +185,34 @@ class DocVQACollator:
             batch["labels"] = batch.pop("label_ids")
         return batch
 
+
+
+
 if __name__ == '__main__':
     from datasets import load_from_disk, DatasetDict
-    from torch.utils.data import DataLoader
-    tokenizer = LayoutLMv3TokenizerFast.from_pretrained('microsoft/layoutlmv3-base')
-    dataset = load_from_disk('data/docvqa_cached_extractive_uncased')
-    dataset = DatasetDict({"train": dataset["train"], "val": dataset['val']})
-    image_dir = {"train": "data/docvqa/train", "val": "data/docvqa/val", "test": "data/docvqa/test"}
-    new_eval_dataset = dataset.map(tokenize_docvqa,
-                                      fn_kwargs={"tokenizer": tokenizer, "img_dir": image_dir},
-                                      batched=True, num_proc=8,
-                                      load_from_cache_file=False,
-                                      remove_columns=dataset["val"].column_names
-                                          )
-    feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained('microsoft/layoutlmv3-base', apply_ocr=False)
-    # feature_extractor = LayoutLMv3FeatureExtractor(apply_ocr=False, image_mean=[0.5, 0.5, 0.5],
-    #                                                image_std=[0.5, 0.5, 0.5])
-    collator = DocVQACollator(tokenizer, feature_extractor)
+    from tqdm import tqdm
+    dataset_file = 'data/docvqa_cached_extractive_all_lowercase_True_msr_True_include_test'
+    # tokenizer = LayoutLMv3TokenizerFast.from_pretrained('microsoft/layoutlmv3-base')
+    dataset = load_from_disk(dataset_file)
+    # dataset = DatasetDict({"train": dataset["train"], "val": dataset['val']})
+    # image_dir = {"train": "data/docvqa/train", "val": "data/docvqa/val", "test": "data/docvqa/test"}
+    # use_msr = "msr_True" in dataset_file
+    # tokenized = dataset.map(tokenize_docvqa,
+    #                         fn_kwargs={"tokenizer": tokenizer,
+    #                                    "img_dir": image_dir,
+    #                                    "use_msr_ocr": use_msr,
+    #                                    "use_generation": False,
+    #                                    "doc_stride": 128},
+    #                         batched=True, num_proc=8,
+    #                         load_from_cache_file=True)
+    max_answer_length = -1
+    for obj in tqdm(dataset["train"], total=len(dataset["train"]), desc="train"):
+        for ans in obj["original_answer"]:
+            if len(ans.split()) > max_answer_length:
+                max_answer_length = len(ans)
+    print(f"maximum number of answer words: {max_answer_length}")
+    # feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained('microsoft/layoutlmv3-base', apply_ocr=False)
+    # collator = DocVQACollator(tokenizer, feature_extractor)
     # loader = DataLoader(new_eval_dataset.remove_columns("metadata"), batch_size=3, collate_fn=collator, num_workers=1)
     # for batch in loader:
     #     print(batch.input_ids)

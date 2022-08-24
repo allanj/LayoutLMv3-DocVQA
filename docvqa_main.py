@@ -159,7 +159,7 @@ def evaluate(args, tokenizer: LayoutLMv3TokenizerFast, valid_dataloader: DataLoa
 
         outputs_numpy = (start_logits_concat, end_logits_concat)
         prediction_dict, prediction_list = postprocess_qa_predictions(dataset_before_tokenized = valid_dataset_before_tokenized,
-                                                                      metadata=metadata, predictions=outputs_numpy, n_best_size=20, max_answer_length=50)
+                                                                      metadata=metadata, predictions=outputs_numpy, n_best_size=20, max_answer_length=100)
         all_pred_texts = [prediction['answer'] for prediction in prediction_list]
     truth = [data["original_answer"] for data in valid_dataset_before_tokenized]
     accelerator.print(f"prediction: {all_pred_texts[:10]}")
