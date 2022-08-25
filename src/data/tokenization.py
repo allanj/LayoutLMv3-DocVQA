@@ -220,11 +220,26 @@ if __name__ == '__main__':
     #                         batched=True, num_proc=8,
     #                         load_from_cache_file=True)
     max_answer_length = -1
-    for obj in tqdm(dataset["train"], total=len(dataset["train"]), desc="train"):
+    max_input_length = -1
+    from collections import Counter
+    length_counter = Counter()
+    split = "train"
+    for obj in tqdm(dataset[split], total=len(dataset[split]), desc=split):
         for ans in obj["original_answer"]:
             if len(ans.split()) > max_answer_length:
                 max_answer_length = len(ans)
-    print(f"maximum number of answer words: {max_answer_length}")
+        if len(obj["words"]) > 510:
+            length_counter["500"] += 1
+        if len(obj["words"]) > 600:
+            length_counter["600"] += 1
+        if len(obj["words"]) > 700:
+            length_counter["700"] += 1
+        if len(obj["words"]) > 800:
+            length_counter["800"] += 1
+        max_input_length = max(max_input_length, len(obj["words"]))
+
+    print(f"maximum number of answer words: {max_answer_length}, maximum number of input words: {max_input_length}")
+    print(length_counter)
     # feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained('microsoft/layoutlmv3-base', apply_ocr=False)
     # collator = DocVQACollator(tokenizer, feature_extractor)
     # loader = DataLoader(new_eval_dataset.remove_columns("metadata"), batch_size=3, collate_fn=collator, num_workers=1)

@@ -56,6 +56,9 @@ def parse_arguments():
     parser.add_argument('--decoder', default="facebook/bart-base", help="The pretrained decoder to use if using generation")
     parser.add_argument('--stride', default=128, type=int, help="document stride for sliding window, >0 means sliding window, overlapping window")
     parser.add_argument('--ignore_unmatched_span', default=1, type=int, help="ignore unmatched span during training, if not ignored, we treat CLS as the start/end.")
+
+    parser.add_argument('--extraction_nbest', default=20, type=int, help="The nbest span to compare with the ground truth during extraction")
+    parser.add_argument('--max_answer_length', default=100, type=int,  help="The maximum answer length")
     args = parser.parse_args()
     for k in args.__dict__:
         logger.info(k + ": " + str(args.__dict__[k]))
@@ -160,7 +163,8 @@ def evaluate(args, tokenizer: LayoutLMv3TokenizerFast, valid_dataloader: DataLoa
 
         outputs_numpy = (start_logits_concat, end_logits_concat)
         prediction_dict, prediction_list = postprocess_qa_predictions(dataset_before_tokenized = valid_dataset_before_tokenized,
-                                                                      metadata=metadata, predictions=outputs_numpy, n_best_size=20, max_answer_length=100)
+                                                                      metadata=metadata, predictions=outputs_numpy,
+                                                                      n_best_size=args.extraction_nbest, max_answer_length=args.max_answer_length)
         all_pred_texts = [prediction['answer'] for prediction in prediction_list]
     truth = [data["original_answer"] for data in valid_dataset_before_tokenized]
     accelerator.print(f"prediction: {all_pred_texts[:10]}")
