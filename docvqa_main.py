@@ -54,7 +54,7 @@ def parse_arguments():
     parser.add_argument('--pretrained_model_name', default='microsoft/layoutlmv3-base', type=str, help="pretrained model name")
     parser.add_argument('--use_generation', default=0, type=int, choices=[0, 1], help="Whether to use generation to perform experiments")
     parser.add_argument('--decoder', default="facebook/bart-base", help="The pretrained decoder to use if using generation")
-    parser.add_argument('--stride', default=128, type=int, help="document stride for sliding window, >0 means sliding window, overlapping window")
+    parser.add_argument('--stride', default=-1, type=int, help="document stride for sliding window, >0 means sliding window, overlapping window")
     parser.add_argument('--ignore_unmatched_span', default=1, type=int, help="ignore unmatched span during training, if not ignored, we treat CLS as the start/end.")
 
     parser.add_argument('--extraction_nbest', default=20, type=int, help="The nbest span to compare with the ground truth during extraction")

@@ -46,14 +46,17 @@ Note that the test set from the docvqa repo does not come with the ground-truth 
 |:------------------------------:|:----------------:|:-----:|:---------------:|:---------:|
 |        LayoutLMv3-base         | lowercase inputs |      built-in      |      68.5%      |     -     |
 |        LayoutLMv3-base         | lowercase inputs |   Microsoft READ API |      73.3%      |  74.24%   | 
-|        LayoutLMv3-base         |  original cased  |   Microsoft READ API | 72.7%         |     -     |
+|        LayoutLMv3-base         |  original cased  |   Microsoft READ API |      72.7%      |     -     |
 | LayoutLMv3-base + Bart Decoder |  lowercase  |   Microsoft READ API |      72.5%      |     -     |
+| LayoutLMv3-base + Roberta-base |  lowercase  |   Microsoft READ API |      73.0%      |     -     |
 
 The performance is still far behind what is reported in the paper.
+
+__Note__: Adding sliding window gives me the performance around 64% at the moment. It seems harmful to do so.
 
 ## TODO
 - [X] Code for tokenization and Collating. (:white_check_mark:)
 - [x] Code for Training (:white_check_mark:)
 - [x] Further tune the performance by hyperparameters/casing issue (:white_check_mark:)
 - [x] Add a decoder for generation (:white_check_mark:)
-- [ ] Sliding window to handle the issue that the matched answers are out of the 512 tokens.
+- [x] Sliding window to handle the issue that the matched answers are out of the 512 tokens.  (:white_check_mark:)
