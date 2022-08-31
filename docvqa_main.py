@@ -8,7 +8,8 @@ import torch
 import numpy as np
 import argparse
 from transformers import PreTrainedModel, LayoutLMv3ForQuestionAnswering, LayoutLMv3TokenizerFast, \
-    LayoutLMv3FeatureExtractor, RobertaModel, LayoutLMv3Config, LayoutLMv3Model
+    LayoutLMv3FeatureExtractor, RobertaModel, LayoutLMv3Config, LayoutLMv3Model, LayoutLMv2Processor, LayoutLMv2FeatureExtractor
+from transformers import LayoutLMv2ForQuestionAnswering, LayoutLMv2TokenizerFast, AutoModelForQuestionAnswering, AutoTokenizer, AutoFeatureExtractor
 from src.utils import get_optimizers, create_and_fill_np_array, write_data, anls_metric_str, postprocess_qa_predictions
 from src.data.tokenization import tokenize_docvqa, DocVQACollator
 from accelerate.utils import set_seed
@@ -181,8 +182,8 @@ def main():
     args = parse_arguments()
     set_seed(args.seed, device_specific=True)
     pretrained_model_name = args.pretrained_model_name
-    tokenizer = LayoutLMv3TokenizerFast.from_pretrained(pretrained_model_name)
-    feature_extractor = LayoutLMv3FeatureExtractor.from_pretrained(pretrained_model_name, apply_ocr=False)
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name, use_fast=True)
+    feature_extractor = AutoFeatureExtractor.from_pretrained(pretrained_model_name, apply_ocr=False)
     if args.use_generation:
         if "bart-base" in args.decoder:
             model = LayoutLMv3ForConditionalGeneration(
@@ -207,8 +208,8 @@ def main():
             # model.config.length_penalty = 2.0
             model.config.num_beams = 1
     else:
-        model = LayoutLMv3ForQuestionAnswering.from_pretrained(pretrained_model_name)
-    collator = DocVQACollator(tokenizer, feature_extractor, model=model)
+        model = AutoModelForQuestionAnswering.from_pretrained(pretrained_model_name)
+    collator = DocVQACollator(tokenizer, feature_extractor, pretrained_model_name=pretrained_model_name, model=model)
     dataset = load_from_disk(args.dataset_file)
     # dataset = DatasetDict({"train": dataset["train"].select(range(100)), "val": dataset['val'].select(range(100)), "test": dataset['test'].select(range(100))})
     image_dir = {"train": "data/docvqa/train", "val": "data/docvqa/val", "test": "data/docvqa/test"}

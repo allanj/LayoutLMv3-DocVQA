@@ -158,6 +158,7 @@ def tokenize_docvqa(examples,
 class DocVQACollator:
     tokenizer: LayoutLMv3TokenizerFast
     feature_extractor: LayoutLMv3FeatureExtractor
+    pretrained_model_name: str
     padding: bool = True
     model: Optional[nn.Module] = None
 
@@ -175,8 +176,12 @@ class DocVQACollator:
         for feature in batch:
             image = Image.open(feature["image"]).convert("RGB")
             vis_features = self.feature_extractor(images=image, return_tensors='np')["pixel_values"][0]
-            feature['pixel_values'] = vis_features.tolist()
-            if 'image' in feature: feature.pop('image')
+            if "layoutlmv2" in self.pretrained_model_name:
+                feature["image"] = vis_features.tolist()
+            else:
+                feature['pixel_values'] = vis_features.tolist()
+                if 'image' in feature:
+                    feature.pop('image')
 
         batch = self.tokenizer.pad(
             batch,
