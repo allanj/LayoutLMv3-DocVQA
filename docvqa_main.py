@@ -67,7 +67,7 @@ def parse_arguments():
 
 
 def train(args,
-          tokenizer: LayoutLMv3TokenizerFast,
+          tokenizer: AutoTokenizer,
           model: PreTrainedModel,
           train_dataloader: DataLoader,
           num_epochs: int, val_metadata,
@@ -122,7 +122,7 @@ def train(args,
     return model
 
 
-def evaluate(args, tokenizer: LayoutLMv3TokenizerFast, valid_dataloader: DataLoader, model: PreTrainedModel,
+def evaluate(args, tokenizer: AutoTokenizer, valid_dataloader: DataLoader, model: PreTrainedModel,
              valid_dataset_before_tokenized: Dataset, metadata,
              res_file=None, err_file=None):
     model.eval()
