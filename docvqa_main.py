@@ -78,8 +78,8 @@ def train(args,
 
     optimizer, scheduler = get_optimizers(model=model, learning_rate=args.learning_rate, num_training_steps=t_total,
                                           warmup_step=0, eps=1e-8)
-    model, optimizer, train_dataloader, valid_dataloader = accelerator.prepare(model, optimizer, train_dataloader,
-                                                                               valid_dataloader)
+    model, optimizer, train_dataloader, valid_dataloader, scheduler = accelerator.prepare(model, optimizer, train_dataloader,
+                                                                               valid_dataloader, scheduler)
 
     best_anls = -1
     os.makedirs(f"model_files/{args.model_folder}", exist_ok=True)  ## create model files. not raise error if exist
