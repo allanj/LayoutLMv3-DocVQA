@@ -100,6 +100,14 @@ def extract_start_end_index_v2(current_answers, words):
             "extracted_answer": extracted_answer})
     return processed_answers, all_not_found
 
+def normalize_bbox(bbox, width, height):
+    return [
+        int(1000 * (bbox[0] / width)),
+        int(1000 * (bbox[1] / height)),
+        int(1000 * (bbox[2] / width)),
+        int(1000 * (bbox[3] / height)),
+    ]
+
 def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, read_msr_ocr: bool = False,
                             extraction_method="v1") -> DatasetDict:
     data_dict = {}
@@ -223,7 +231,7 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
 if __name__ == '__main__':
     all_lowercase = True
     read_msr = True ## default False, for data with MSR OCR, please contact me.
-    answer_extraction_methods = ["v1_v2", "v2_v1"]
+    answer_extraction_methods = ["v1"] ## default v1, v2, v1_v2, v2_v1
     for answer_extraction_method in answer_extraction_methods:
         dataset = convert_docvqa_to_cache("data/docvqa/train/train_v1.0.json",
                                           "data/docvqa/val/val_v1.0.json",

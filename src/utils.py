@@ -263,3 +263,12 @@ def anls_metric_str(predictions: List[str], gold_labels: List[List[str]], tau=0.
             max_s = max(s, max_s)
         res.append(max_s)
     return res, sum(res)/len(res)
+
+if __name__ == '__main__':
+
+    # pred = "what does it mean?"
+    # golds = ["what does it mean?", "What Does It Mean?", "ACTIVITY ONE"]
+    # print(anls_metric_str([pred], [golds]))
+
+    data = read_data('/Users/allanjie/Downloads/answer_prefix.json')
+    write_data(data=data, file='/Users/allanjie/Downloads/answer_prefix_updated.json')
