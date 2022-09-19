@@ -73,6 +73,61 @@ def reverse_harsh_find(answer_tokens, words):
     return None, None, None
 
 
+def simple_anls(pred: str, golds: List[str], tau=0.5):
+    """
+    predictions: List[List[int]]
+    gold_labels: List[List[List[int]]]: each instances probably have multiple gold labels.
+    """
+    max_s = 0
+    for gold in golds:
+        dis = td.levenshtein.distance(pred.lower(), gold.lower())
+        max_len = max(len(pred), len(gold))
+        if max_len == 0:
+            s = 0
+        else:
+            nl = dis / max_len
+            s = 1-nl if nl < tau else 0
+        max_s = max(s, max_s)
+    return max_s
+
+def get_answer_indices_by_enumeration(words, answer, threshold):
+    answer_tokens = answer.split()
+    end_index = None
+    start_index = None
+    words = [clean_text(x) for x in words]
+    answer_tokens = [clean_text(x) for x in answer_tokens]
+    answer = ' '.join(answer_tokens)
+
+     ## increase this threshold probably increase the preprocessing time.
+    min_length = max(len(answer_tokens) - threshold, 0)
+    max_length = min(len(answer_tokens) + threshold, len(words))
+
+    max_anls = 0
+    extracted_answer = None
+    found = False
+
+    for candidate_answer_length in range(min_length, max_length + 1):
+        for i in range(len(words) - candidate_answer_length + 1): ## i from 0, 1, 2, ..., len(words) - candidate_answer_length
+            candidate_answer = ' '.join(words[i:i + candidate_answer_length])
+            anls = simple_anls(candidate_answer, [answer])
+            if anls > max_anls:
+                max_anls = anls
+                start_index = i
+                end_index = i + candidate_answer_length - 1
+                extracted_answer = candidate_answer
+                if anls == 1.0:
+                    found = True
+            if found:
+                break
+        if found:
+            break
+    if max_anls == 0:
+        return None, None, None
+    elif max_anls < 0.8:
+        print(f'Warning: anls is less than 0.8: {extracted_answer}, {answer}')
+    return start_index, end_index, extracted_answer
+
+
 def get_answer_indices(words, answer):
     answer_tokens = answer.split()
     end_index = None

@@ -3,7 +3,7 @@ import editdistance
 from collections import defaultdict
 from datasets import DatasetDict, Dataset
 from src.utils import read_data
-from preprocess.utils import get_answer_indices,clean_text, anls_metric_str, better_subfinder
+from preprocess.utils import get_answer_indices,clean_text, anls_metric_str, better_subfinder, get_answer_indices_by_enumeration
 
 from datasets import load_from_disk
 """
@@ -100,6 +100,48 @@ def extract_start_end_index_v2(current_answers, words):
             "extracted_answer": extracted_answer})
     return processed_answers, all_not_found
 
+def extract_start_end_index_v3(current_answers, words, threshold = 3):
+    """
+    Directly enumerate all the spans, really expensive, there is a threshold of tolerance
+    :param current_answers:
+    :param words:
+    :param threshold: for example, the length of answer token is L, we search all the spans
+                        whose length is within [L-threshold, L+threshold]
+    :return:
+    """
+    ## extracting the start, end index
+    processed_answers = []
+    ## remove duplicates because of the case of multiple answers
+    current_answers = list(set(current_answers))
+    all_not_found = True
+    for ans_index in range(len(current_answers)):
+        current_ans = current_answers[ans_index]
+        start_index, end_index, extracted_answer = get_answer_indices_by_enumeration(words, current_answers[ans_index], threshold)
+        ans = current_ans.lower()
+        extracted_answer = clean_text(extracted_answer)
+        ans = clean_text(ans)
+        dist = editdistance.eval(extracted_answer.replace(' ', ''),
+                                 ans.replace(' ', '')) if extracted_answer != None else 1000
+        if start_index == -1:
+            start_index = -1
+            end_index = -1
+            extracted_answer = ""
+        if dist > 5:
+            start_index = -1
+            end_index = -1
+        if start_index == -1 or len(extracted_answer) > 150 or extracted_answer == "":
+            start_index = -1
+            end_index = -1
+            extracted_answer = ""
+        if start_index != -1:
+            all_not_found = False
+        processed_answers.append({
+            "start_word_position": start_index,
+            "end_word_position": end_index,
+            "gold_answer": current_ans,
+            "extracted_answer": extracted_answer})
+    return processed_answers, all_not_found
+
 def normalize_bbox(bbox, width, height):
     return [
         int(1000 * (bbox[0] / width)),
@@ -120,6 +162,7 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
         all_original_accepted = []
         all_extracted_not_clean = []
         msr_data = None
+        msr_image_name2width_height = None
         if read_msr_ocr:
             if "test" not in split:
                 msr_file = "data/docvqa_proc_train_t3_ocr" if split == "train" else "data/docvqa_proc_val_t3_msread_ocr"
@@ -127,6 +170,16 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
             else:
                 msr_file = "data/docvqa/test/test_v1.0_msr.json"
                 msr_data = read_data(msr_file)
+        # # Note: for natural order:
+        # if read_msr_ocr:
+        #     image_name2width_height_file = f"data/docvqa/{split}_image_name2width_height.json"
+        #     ocr_info_file = f"data/docvqa/{split}_v1.0_msr_order_natural_more_info.json"
+        #     msr_data = read_data(ocr_info_file)
+        #     msr_image_name2width_height = read_data(image_name2width_height_file)
+        # # Note: for segment level:
+        # if read_msr_ocr:
+        #     ocr_info_file = f"data/docvqa/{split}/{split}_v1.0_msr_seg_True.json"
+        #     msr_data = read_data(ocr_info_file)
         for obj_idx, obj in tqdm(enumerate(objs), desc="reading {}".format(split), total=len(objs)):
             msr_obj = None
             if msr_data is not None:
@@ -168,9 +221,18 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
                         text.append(word["text"].lower() if lowercase else word["text"])
                         layout.append([new_x1, new_y1, new_x2, new_y2])
             else:
+
+                if msr_image_name2width_height is not None:
+                    normalized_layout = []
+                    image_name = msr_obj['image'].split('/')[1]
+                    for coord in msr_obj['layout']:
+                        normalized_layout.append(normalize_bbox(coord, msr_image_name2width_height[image_name]['width'], msr_image_name2width_height[image_name]['height']))
+                    layout = normalized_layout
+                else:
+                    layout = msr_obj['boxes'] if "boxes" in msr_obj else msr_obj["layout"]
                 all_text = ' '.join(msr_obj['words'])
                 text = [word.lower() if lowercase else word for word in msr_obj['words']]
-                layout = msr_obj['boxes'] if "boxes" in msr_obj else msr_obj["layout"]
+
             new_all_data['ocr_text'].append(all_text)
             new_all_data['words'].append(text)
             new_all_data['layout'].append(layout)
@@ -231,12 +293,30 @@ def convert_docvqa_to_cache(train_file, val_file, test_file, lowercase:bool, rea
 if __name__ == '__main__':
     all_lowercase = True
     read_msr = True ## default False, for data with MSR OCR, please contact me.
-    answer_extraction_methods = ["v1"] ## default v1, v2, v1_v2, v2_v1
+    answer_extraction_methods = ["v3"] ## default v1, v2, v1_v2, v2_v1
     for answer_extraction_method in answer_extraction_methods:
         dataset = convert_docvqa_to_cache("data/docvqa/train/train_v1.0.json",
                                           "data/docvqa/val/val_v1.0.json",
                                           "data/docvqa/test/test_v1.0.json",
                                           lowercase=all_lowercase,read_msr_ocr=read_msr,
                                           extraction_method=answer_extraction_method)
-        cached_filename = f"data/docvqa_cached_extractive_all_lowercase_{all_lowercase}_msr_{read_msr}_extraction_{answer_extraction_method}"
+        cached_filename = f"data/docvqa_cached_extractive_all_lowercase_{all_lowercase}_msr_{read_msr}_extraction_{answer_extraction_method}_enumeration"
         dataset.save_to_disk(cached_filename)
+
+        ## for natural order
+        # dataset = convert_docvqa_to_cache("data/docvqa/train/train_v1.0.json",
+        #                                   "data/docvqa/val/val_v1.0.json",
+        #                                   "data/docvqa/test/test_v1.0.json",
+        #                                   lowercase=all_lowercase, read_msr_ocr=read_msr,
+        #                                   extraction_method=answer_extraction_method)
+        # cached_filename = f"data/docvqa_cached_extractive_all_lowercase_{all_lowercase}_msr_{read_msr}_extraction_{answer_extraction_method}_natural_order"
+        # dataset.save_to_disk(cached_filename)
+
+        ## segment useless
+        # dataset = convert_docvqa_to_cache("data/docvqa/train/train_v1.0.json",
+        #                                   "data/docvqa/val/val_v1.0.json",
+        #                                   "data/docvqa/test/test_v1.0.json",
+        #                                   lowercase=all_lowercase,read_msr_ocr=read_msr,
+        #                                   extraction_method=answer_extraction_method)
+        # cached_filename = f"data/docvqa_cached_extractive_all_lowercase_{all_lowercase}_msr_{read_msr}_extraction_{answer_extraction_method}_seg_level"
+        # dataset.save_to_disk(cached_filename)
